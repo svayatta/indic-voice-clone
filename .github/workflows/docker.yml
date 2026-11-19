@@ -3,13 +3,13 @@ name: docker
 # main changes (a merged pull request):
 #   :latest  CPU torch, linux/amd64 and linux/arm64
 #   :cuda    CUDA 12.6 torch, linux/amd64 (run with --gpus all on an NVIDIA host)
-# Pull requests that touch the image build and smoke-test both on amd64,
-# without pushing, so a broken Dockerfile is caught before it reaches main.
+# Every pull request, docs included, builds and smoke-tests both on amd64,
+# without pushing, so a broken image is caught before it reaches main. The
+# image copies README.md, LICENSE and NOTICE, so docs changes reach it too.
 on:
   push:
     branches: [main]
   pull_request:
-    paths: [Dockerfile, .dockerignore, pyproject.toml, constraints.txt, "src/**", .github/workflows/docker.yml]
   workflow_dispatch:
 
 permissions:
