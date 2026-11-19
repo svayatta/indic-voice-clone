@@ -263,6 +263,39 @@ def cmd_listen_page(a):
     write_listening_page(a.run_a, a.run_b, a.out, a.check_every, a.seed, log=_log)
 
 
+def cmd_closeness(a):
+    from voiceclone.audio import load16
+    from voiceclone.benchmark import source_of
+    from voiceclone.closeness import check_leak, closeness, format_report, long_form_pairs, write_report
+
+    if a.long_form:
+        pairs, same_words = long_form_pairs(a.long_form), True
+        audio = [("His line, then the clone's (ab.wav)", Path(a.long_form) / "ab.wav")]
+        audio = [x for x in audio if x[1].exists()]
+    elif a.clone and a.original:
+        pairs, same_words = [(load16(a.clone), load16(a.original))], a.same_words
+        audio = [("Clone", a.clone), ("Original", a.original)]
+    else:
+        sys.exit("pass --clone and --original, or --long-form DIR")
+    sources = [a.original_source] if a.original_source else [source_of(a.original)] if a.original else []
+    if (a.lora or a.train_clips) and not sources:
+        sys.exit("--long-form with --lora needs --original-source: the recording the original words come from")
+    leak = check_leak(sources, a.lora, a.train_clips, a.allow_leak)
+    encoder = None
+    if not a.no_identity:
+        try:
+            from voiceclone.speaker import SpeakerEncoder
+
+            encoder = SpeakerEncoder(a.ecapa_dir)
+        except ImportError:
+            _log("identity not measured: install the speaker extra (.[speaker]) or pass --no-identity")
+    rep = closeness(pairs, same_words, encoder=encoder, baseline=load16(a.baseline) if a.baseline else None)
+    rep["leak"] = leak
+    write_report(rep, a.out, audio)
+    _log(format_report(rep))
+    _log(f"wrote {Path(a.out) / 'closeness.html'} and closeness.json")
+
+
 def cmd_run_recipe(a):
     from voiceclone.recipe import run_recipe
 
@@ -454,6 +487,25 @@ def build_parser() -> argparse.ArgumentParser:
                    help="score even if the adapter trained on a benchmark recording (the row is flagged)")
     p.add_argument("--train-clips", action="append", default=None,
                    help="clip folder(s) the adapter trained on, if its train_log.json cannot say")
+    ecapa(p)
+
+    p = add("closeness", cmd_closeness,
+            "How close is a clone to the original recording? Identity, timbre, pitch, rhythm and energy, each banded")
+    p.add_argument("--clone", default=None, help="the cloned audio")
+    p.add_argument("--original", default=None, help="the real recording to compare with (held out from training)")
+    p.add_argument("--same-words", action="store_true",
+                   help="clone and original say the same words: also measure timbre, contours and pace")
+    p.add_argument("--long-form", default=None, help="a `long-form` output folder: compares each chunk with his words")
+    p.add_argument("--baseline", default=None,
+                   help="another real recording of him, so each number is shown next to what his own recordings reach")
+    p.add_argument("--no-identity", action="store_true", help="skip the ECAPA voiceprint (no speechbrain needed)")
+    p.add_argument("--lora", default=None, help="adapter that made the clone: refuses an original it trained on")
+    p.add_argument("--train-clips", action="append", default=None,
+                   help="clip folder(s) the adapter trained on, if its train_log.json cannot say")
+    p.add_argument("--original-source", default=None,
+                   help="recording name of the original for the leak check (default: from its file name)")
+    p.add_argument("--allow-leak", action="store_true", help="report anyway when the adapter trained on the original")
+    p.add_argument("--out", required=True, help="folder for closeness.html and closeness.json")
     ecapa(p)
 
     p = add("compare", cmd_compare, "Is benchmark run B better than run A? (paired takes, bootstrap interval)")

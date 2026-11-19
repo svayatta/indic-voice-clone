@@ -61,6 +61,9 @@ Audio is never contributed or licensed: see [NOTICE](NOTICE) and rule 5.
    attaches a blind A/B result (`voiceclone listen-page`, then `compare --answers`).
    It needs at least three native speakers of the dialect who passed the hidden
    real-recording checks.
+   `voiceclone closeness` helps you find what to change (it shows which of
+   pitch, rhythm, timbre or energy is off), but it is not evidence of a better
+   accent either.
 
 10. **Failed experiments are results.** Close a pull request that fails the gate
     with its gate comment in place, and add one line on what you learnt to the

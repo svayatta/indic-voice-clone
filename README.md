@@ -484,6 +484,30 @@ This adds B's win rate per question with a 95% interval, and how often each
 listener picked the real recording in the checks. A listener who cannot pick
 out the real recording is guessing, so weigh their answers accordingly.
 
+**6. See where a clone falls short.** `compare` says whether a run is better;
+`closeness` says in what way one clone differs from him, so you know what to
+fix next. It reports five dimensions, each banded close, noticeably different
+or far: identity (ECAPA voiceprint), timbre, pitch (level, range,
+intonation), rhythm (pace, pauses) and energy (loudness spread, stress).
+There is no overall score on purpose.
+
+```bash
+# best: a long-form folder, which pairs every clone chunk with his own words
+voiceclone closeness --long-form outputs/long --baseline data/K14.wav --out outputs/closeness
+# or any two files; add --same-words only if they say the same text
+voiceclone closeness --clone take.wav --original K06.wav --baseline K14.wav --out outputs/closeness
+```
+
+`--baseline` is a second real recording of him: every number is then shown
+next to what his own recordings reach, and identity is judged as a fraction
+of it, because on tape even two recordings of him disagree. Timbre, the two
+contours and pace need the same words, so they are not measured for
+different texts. Pass `--lora` to refuse an original the adapter trained on
+(`--original-source` names it for a long-form folder). It writes
+`closeness.html` (audio, table and pitch contours) and `closeness.json`. The
+timbre thresholds are provisional, and timbre distance also rises with a
+pitch difference, so read it next to the pitch row.
+
 ## Command reference
 
 All steps are subcommands of `voiceclone`; run `voiceclone <step> --help`
@@ -506,6 +530,7 @@ for every option.
 | Voice similarity | `eval-similarity --clips data/clips --samples outputs/synth` | ECAPA cosine vs real clips |
 | Intelligibility | `eval-intelligibility --clips data/clips --samples outputs/synth` | character error vs real clips |
 | Same-words test | `long-form --lora models/lora --chunks data/vad_X --source X.wav --ref clip.wav --ref-text-file ref.txt --out outputs/long` | clone vs original, A/B file |
+| Closeness report | `closeness --long-form outputs/long --baseline real.wav --out outputs/closeness` | identity, timbre, pitch, rhythm, energy, banded |
 | Benchmark a run | `benchmark --spec data/bench.json --lora models/lora --out outputs/bench/lora` | scores + `results.jsonl` row |
 | Compare two runs | `compare outputs/bench/A outputs/bench/B` | paired differences, 95% interval |
 | Blind listening | `listen-page outputs/bench/A outputs/bench/B --out listen.html` | A/B page + answer key |
@@ -604,6 +629,7 @@ src/voiceclone/
   benchmark.py    frozen benchmark spec, leakage guard, scoring, leaderboard
   compare.py      paired bootstrap comparison and listening win rates
   listen.py       blind A/B listening page
+  closeness.py    how close one clone is to the original, dimension by dimension
   postprocess.py  trim to text
   longform.py     same-words re-voicing
   enhance/        ClearerVoice and Audacity 3.x denoisers
@@ -640,8 +666,9 @@ uv pip install --python .venv/bin/python -e ".[dev]" -c constraints.txt
 
 The unit tests cover transliteration, transcript parsing, the Svara token and
 prompt layout, pause segmentation, take selection, the benchmark's leakage
-guard, paired comparison and listening page, the gate's rules, recipe checks
-and the studio's API. They need no models (the cleaning tests need ffmpeg).
+guard, paired comparison and listening page, the closeness report (each
+dimension blames only the change that was made), the gate's rules, recipe
+checks and the studio's API. They need no models (the cleaning tests need ffmpeg).
 `tests/test_watermark.py` needs torch and AudioSeal and is skipped without
 them; CI runs it in its own `watermark` job.
 
