@@ -80,9 +80,11 @@ sentences, seeds and conditioning clip), with a bootstrap over sentences. A
 difference counts only when its 95% interval excludes zero.
 
 Only the owner merges, and only green pull requests: both checks pass, and a
-listening test is attached where rule 9 applies. GitHub can't enforce this on
-a private repository on the free plan, so it is a rule, not a setting. Don't
-push to `main` directly.
+listening test is attached where rule 9 applies. `main` is protected: changes
+arrive only through pull requests, `test` and `watermark` must pass, open
+review conversations must be resolved, and nobody, admins included, can push
+or force-push to it directly. The quality gate and the listening test are
+rules the owner checks, not settings.
 
 ## Running an experiment
 
