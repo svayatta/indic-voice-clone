@@ -1,3 +1,5 @@
+<img src="src/voiceclone/studio/static/logo.svg" alt="pratidhvani logo" width="72">
+
 # pratidhvani
 
 प्रतिध्वनि, *pratidhvani*: Sanskrit for "echo", a returning sound. Formerly
