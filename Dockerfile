@@ -5,7 +5,7 @@
 # Apple GPU: there, install natively instead (see the README).
 #
 #   docker run --rm -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN \
-#     ghcr.io/svayatta/indic-voice-clone
+#     ghcr.io/svayatta/pratidhvani
 #
 # Everything the container writes (voices, the Hugging Face model cache,
 # speaker and alignment models) goes under /data, so one volume keeps it.

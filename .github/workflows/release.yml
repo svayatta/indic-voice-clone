@@ -1,6 +1,6 @@
 name: release
 # Publishes the package to PyPI when a version tag (v0.2.0, ...) is pushed, so
-# `uv tool install "indic-voice-clone[all]"` gives a native install that uses
+# `uv tool install "pratidhvani[all]"` gives a native install that uses
 # the Apple GPU or CUDA. Uses PyPI trusted publishing: no token is stored here.
 # One-time setup by the owner is in CONTRIBUTING.md ("Releasing").
 on:

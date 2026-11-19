@@ -159,7 +159,7 @@ def cmd_detect(a):
     for f in a.files:
         d = wm.detect(load16(f), SR)
         found += d.ours
-        verdict = ("made with indic-voice-clone" if d.ours else
+        verdict = ("made with pratidhvani" if d.ours else
                    "AudioSeal watermark from another source" if d.marked else "no watermark found")
         print(f"{f}: {verdict} (detector {d.probability:.2f}, {16 - d.bit_errors}/16 tag bits)")
     if not found:

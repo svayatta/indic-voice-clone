@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "indic-voice-clone"
+name = "pratidhvani"
 version = "0.1.0"
 description = "Clone one Indic-language speaker from archival recordings with Svara-TTS and LoRA"
 readme = "README.md"
@@ -18,8 +18,8 @@ align = ["ctc-forced-aligner", "onnxruntime==1.20.1", "unidecode"]
 speaker = ["torch", "torchaudio", "speechbrain"]
 asr = ["torch", "torchaudio", "transformers"]
 web = ["fastapi", "uvicorn", "python-multipart"]
-all = ["indic-voice-clone[tts,align,speaker,asr,web]"]
-dev = ["pytest", "httpx2", "indic-voice-clone[web]"]
+all = ["pratidhvani[tts,align,speaker,asr,web]"]
+dev = ["pytest", "httpx2", "pratidhvani[web]"]
 # ClearerVoice pins numpy<2: install `clearvoice` in a separate environment
 # and pass its python to `voiceclone prepare --enhance-python`.
 

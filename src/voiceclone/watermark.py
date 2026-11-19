@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 
 SR = 16000            # AudioSeal works at 16 kHz; other rates are resampled to it and back
-TAG = 0xA51C          # 16-bit message meaning "made with indic-voice-clone"
+TAG = 0xA51C          # 16-bit message meaning "made with pratidhvani"
 MIN_SAMPLES = 1600    # 0.1 s at 16 kHz; anything shorter is left as it is
 DETECT_THRESHOLD = 0.5
 MAX_BIT_ERRORS = 2

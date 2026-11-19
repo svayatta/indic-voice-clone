@@ -1,127 +1,169 @@
-# indic-voice-clone
+# pratidhvani
 
-Clone one speaker of an Indic language, regional accent included, from a few
-archival recordings. It was built and tested on northern Kannada lecture tapes,
-on a 16 GB Apple-silicon laptop. The voice model and codec are open-source and
-licensed for commercial use. This code is open source under Apache 2.0; no
-audio is licensed (see [Licence](#licence)).
+प्रतिध्वनि, *pratidhvani*: Sanskrit for "echo", a returning sound. Formerly
+`indic-voice-clone`.
 
-How it works: the recordings are cleaned lightly and cut into short chunks.
+Open, self-hosted tools to keep the voices of India's speakers, accent and
+dialect included. The code is open source under Apache 2.0; no audio is
+licensed (see [Licence](#licence)).
+
+## Why
+
+Much of India's spoken heritage survives only in recordings: lectures,
+discourses, oral histories, radio archives and family tapes. Commercial
+text-to-speech offers a few studio voices per language and flattens regional
+accents, so it cannot bring back a particular person, or the way people speak
+in a particular place. This project's aim: a family, archive, school or
+community should be able to take imperfect recordings of someone and produce
+a voice that sounds like that person and speaks like where they are from, on
+their own hardware, without handing the recordings to anyone.
+
+What it stands for:
+
+- **Faithful accent and dialect.** Verbatim transcripts, light-touch
+  restoration, and native-speaker listening tests, not just numeric scores.
+- **Built for archival audio.** Noisy, reverberant, decades-old recordings,
+  not studio data.
+- **Sovereign.** It runs locally, so the recordings and the trained voice
+  stay with their owners.
+- **Consent and provenance.** Only voices with consent. Every generated clip
+  carries a [watermark](#watermark) that `voiceclone detect` can find.
+- **Measured, not claimed.** Frozen benchmarks, guards against testing on
+  training audio, and a quality gate on every change.
+- **Open.** Apache-2.0 code on openly licensed models, growing from one
+  dialect towards all of India's languages.
+
+Uses it is meant for: hearing a teacher or an elder read new text in their own
+voice; course material in a teacher's voice and dialect; voice banking for
+speakers of Indic languages who are losing their speech; restoring and
+re-voicing archival media with consent; and preserving dialects that
+commercial voice products ignore.
+
+The first test case is a northern Kannada speaker's lecture tapes, cloned on
+a 16 GB Apple-silicon laptop.
+
+## How it works
+
+The recordings are cleaned lightly and cut into short chunks.
 Each chunk is transcribed verbatim in the dialect, and only clean chunks of
 the target speaker are kept. Those chunks LoRA-fine-tune the
 [Svara-TTS voice-clone model](https://huggingface.co/kenpath/svara-tts-voiceclone-beta)
 in the same "reference-swap" prompt format the model uses at inference.
 
-## Prerequisites
+## Getting started
 
-**Hardware**
-- An Apple-silicon Mac with 16 GB of memory, or a Linux machine with an
-  NVIDIA GPU with 16 GB or more of VRAM. Only the Mac has been tested; the
-  code picks CUDA automatically when it is available.
-- About 15 GB of free disk. The Svara model alone is 6.2 GB, the alignment
-  model is 1.2 GB, and the Python environment is about 1 GB.
+Set up the repository and run the tests. This needs no GPU, no models and no
+recordings, and takes a few minutes.
 
-**Software**
-- Python 3.10 or newer (3.12 is tested).
-- [uv](https://docs.astral.sh/uv/), or pip with a virtual environment.
-- [ffmpeg](https://ffmpeg.org/) on your `PATH` (`brew install ffmpeg` or
-  `apt install ffmpeg`).
-- A [Hugging Face](https://huggingface.co/) account. Transcription uses
-  AI4Bharat IndicConformer, which is gated: open
-  [its model page](https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual),
-  accept the terms, then run `hf auth login`.
+You need Python 3.10 or newer (3.12 is tested), [uv](https://docs.astral.sh/uv/)
+and [ffmpeg](https://ffmpeg.org/) on your `PATH`. On a Mac:
 
-**Optional**
+```bash
+brew install uv ffmpeg
+```
+
+On Debian or Ubuntu, `apt install ffmpeg`, and uv from its website.
+
+```bash
+git clone https://github.com/svayatta/pratidhvani.git
+cd pratidhvani
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e ".[dev]" -c constraints.txt
+```
+
+```bash
+.venv/bin/python -m pytest
+```
+
+```bash
+.venv/bin/python ci/check_hygiene.py
+```
+
+The tests cover transliteration, transcript parsing, the Svara token and
+prompt layout, pause segmentation, take selection, the benchmark's leakage
+guard, paired comparison and the listening page, the closeness report (each
+dimension blames only the change that was made), the quality gate's rules,
+recipe checks and the studio's API. `tests/test_watermark.py` needs torch and
+AudioSeal and is skipped without them. The hygiene check enforces the
+repository rules in [CONTRIBUTING.md](CONTRIBUTING.md): no audio, weights or
+home-folder paths in git.
+
+To clone voices, install every extra into the same environment. This pulls
+torch and the model libraries, about 1 GB:
+
+```bash
+uv pip install --python .venv/bin/python -e ".[all]" -c constraints.txt
+source .venv/bin/activate
+voiceclone --help
+```
+
+Transcription uses AI4Bharat IndicConformer, which is gated: open
+[its model page](https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual),
+accept the terms, then run `hf auth login` (or set `HF_TOKEN`). Building the
+aligner needs a C++ compiler once (`xcode-select --install` on a Mac,
+`build-essential` on Debian or Ubuntu). Then try the
+[voice studio](#voice-studio-web-app) with `voiceclone serve`, or follow
+[Clone a voice from a recording](#clone-a-voice-from-a-recording).
+
+`constraints.txt` pins the exact versions behind the reference results
+(Python 3.12, macOS arm64). Leave it out to take the newest releases, at the
+risk of behaviour changes. The extras are `tts` for synthesis and training,
+`align` for forced alignment and character error, `speaker` for voiceprints,
+`asr` for IndicConformer, `web` for the studio, `dev` for the tests, and `all`
+for everything except `dev`.
+
+## Requirements for cloning a voice
+
+**Hardware.** An Apple-silicon Mac with 16 GB of memory, or a Linux machine
+with an NVIDIA GPU with 16 GB or more of VRAM. Only the Mac has been tested;
+the code picks CUDA automatically when it is available. Generating speech
+with the 3B model on a CPU takes minutes per sentence, and training needs a
+GPU. Allow about 15 GB of disk: the Svara model alone is 6.2 GB and the
+alignment model 1.2 GB. Models download on first use: Svara and IndicConformer
+go to the Hugging Face cache, and the alignment model to `~/ctc_forced_aligner/`.
+
+**Recordings.** At least 10 to 20 minutes of the target speaker after
+cleaning; the reference results used about 23 minutes from one 32-minute
+lecture. Any format ffmpeg reads; MP3 at 128 kbps is fine. You also need the
+right to use the voice: only clone someone who has consented, or whose estate
+has.
+
+**Languages.** Text in Kannada, Telugu, Tamil, Malayalam, Devanagari (Hindi,
+Marathi, Sanskrit, Nepali), Bengali/Assamese, Gujarati, Gurmukhi and Odia is
+transliterated for alignment, length limits and scoring. Only Kannada has
+been tested end to end. Text in other scripts, such as Urdu, can still be
+synthesised, but only with the 20-second length cap, and the alignment-based
+steps cannot use it.
+
+**Optional tools.**
 - Audacity 3.x, for removing hiss, mains hum and clicks from tape. Audacity
   4 has no scripting. Enable `mod-script-pipe` under Preferences, Modules,
   then restart Audacity. The `audacity-denoise` step currently assumes
   macOS and `~/Applications/Audacity 3.7.app`; pass `--app` for another path.
   It quits and relaunches Audacity for every file, so it refuses to start
   while Audacity is open unless you pass `--force-restart`.
-- A second Python environment for ClearerVoice neural denoising, because
-  `clearvoice` needs `numpy<2` (see Installation).
+- ClearerVoice neural denoising, in a second environment because
+  `clearvoice` needs `numpy<2`:
 
-**Languages**
-- Text in Kannada, Telugu, Tamil, Malayalam, Devanagari (Hindi, Marathi,
-  Sanskrit, Nepali), Bengali/Assamese, Gujarati, Gurmukhi and Odia is
-  transliterated for alignment, length limits and scoring. Only Kannada has
-  been tested end to end. Text in other scripts, such as Urdu, can still be
-  synthesised, but only with the 20-second length cap, and the alignment-based
-  steps cannot use it.
+  ```bash
+  uv venv --python 3.12 .venv-enh
+  uv pip install --python .venv-enh/bin/python clearvoice "numpy<2" -e .
+  ```
 
-**Recordings**
-- At least 10 to 20 minutes of the target speaker after cleaning. The
-  reference results used about 23 minutes from one 32-minute lecture.
-- Any format ffmpeg reads. MP3 at 128 kbps is fine.
-- The right to use the voice. Only clone someone who has consented, or whose
-  estate has.
-
-## Installation
-
-Pick the route that reaches your machine's GPU: generating speech with the
-3B model on a CPU takes minutes per sentence, and training needs a GPU.
+### Which install to use
 
 | Your machine | Use | Runs on |
 |---|---|---|
-| Mac with Apple silicon | [native install](#native-install) | Apple GPU |
-| Linux with an NVIDIA GPU | [`:cuda` Docker image](#docker), or the native install | CUDA |
+| Mac with Apple silicon | [Getting started](#getting-started) (from source) | Apple GPU |
+| Linux with an NVIDIA GPU | [`:cuda` Docker image](#docker), or from source | CUDA |
 | Anything else, or a quick try | [`:latest` Docker image](#docker) | CPU |
-| Working on the code | [from source](#from-source) | whatever the machine has |
 
-### Native install
+The package is not on PyPI yet. Each release will publish it (see
+[CONTRIBUTING.md](CONTRIBUTING.md#releasing)), after which
+`uv tool install "pratidhvani[all]"` installs the `voiceclone` command
+without a checkout.
 
-```bash
-brew install ffmpeg uv
-```
-
-```bash
-uv tool install "indic-voice-clone[all]"
-```
-
-```bash
-voiceclone serve
-```
-
-Open http://127.0.0.1:8000. On Linux, install `ffmpeg` with your package
-manager and uv from https://docs.astral.sh/uv/. A C++ compiler is needed once,
-to build the aligner (`xcode-select --install` on a Mac; `build-essential`
-on Debian or Ubuntu). For the gated IndicConformer model, accept its terms on
-Hugging Face and run `hf auth login`, or set `HF_TOKEN`. The models need about
-10 GB of disk on first use. `uv tool upgrade indic-voice-clone` updates it.
-
-The package is published to PyPI from each release (see
-[CONTRIBUTING.md](CONTRIBUTING.md#releasing)). Until the first release,
-install from source.
-
-### From source
-
-```bash
-git clone https://github.com/svayatta/indic-voice-clone.git
-cd indic-voice-clone
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -e ".[all]" -c constraints.txt
-source .venv/bin/activate
-voiceclone --help
-```
-
-`constraints.txt` pins the exact versions behind the reference results
-(Python 3.12, macOS arm64). Leave it out to take the newest releases, at
-the risk of behaviour changes.
-
-The extras are `tts` for synthesis and training, `align` for forced
-alignment and character error, `speaker` for voiceprints, `asr` for
-IndicConformer, and `all` for everything. Models download on first use:
-Svara and IndicConformer go to the Hugging Face cache, and the alignment
-model goes to `~/ctc_forced_aligner/`.
-
-Optional ClearerVoice environment:
-
-```bash
-uv venv --python 3.12 .venv-enh
-uv pip install --python .venv-enh/bin/python clearvoice "numpy<2" -e .
-```
-
-## Getting started
+## Clone a voice from a recording
 
 This walk-through turns one recording, `talk.mp3`, into a fine-tuned voice
 and six test sentences. Run it from the repository root. Everything is
@@ -224,7 +266,6 @@ also trains a LoRA clone. The sample decides which voice to keep, other
 speakers are filtered out, and previews then use the trained adapter.
 
 ```bash
-uv pip install --python .venv/bin/python -e ".[all]" -c constraints.txt
 voiceclone serve --root studio            # http://127.0.0.1:8000
 ```
 
@@ -252,7 +293,7 @@ listens on this computer only unless you pass `--host`.
 ## Docker
 
 Each merge to `main` publishes an image for linux/amd64 and linux/arm64 to
-`ghcr.io/svayatta/indic-voice-clone` (`latest`, plus a `sha-…` tag per
+`ghcr.io/svayatta/pratidhvani` (`latest`, plus a `sha-…` tag per
 commit). It contains the `voiceclone` command and every extra, and runs the
 voice studio by default.
 
@@ -266,9 +307,8 @@ voice studio by default.
   transcription alone need about 4 GB.
 - **Disk.** About 2 GB for the image and 10 GB for the models it downloads on
   first use.
-- **A Hugging Face token** that can read the gated
-  [IndicConformer](https://huggingface.co/ai4bharat/indic-conformer-600m-multilingual)
-  model (accept its terms first). A read-only token is enough.
+- **A Hugging Face token** (read-only is enough) for the gated
+  IndicConformer model; see [Getting started](#getting-started).
 
 ### Run the studio
 
@@ -279,17 +319,17 @@ use `:cuda` with `--gpus all` instead (linux/amd64, about 6 GB, CUDA 12.6;
 any CUDA 12 driver, 525 or newer):
 
 ```bash
-docker run -d --name voiceclone --gpus all -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN=hf_... ghcr.io/svayatta/indic-voice-clone:cuda
+docker run -d --name voiceclone --gpus all -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN=hf_... ghcr.io/svayatta/pratidhvani:cuda
 ```
 
 On a CPU-only machine:
 
 ```bash
-docker pull ghcr.io/svayatta/indic-voice-clone:latest
+docker pull ghcr.io/svayatta/pratidhvani:latest
 ```
 
 ```bash
-docker run -d --name voiceclone -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN=hf_... ghcr.io/svayatta/indic-voice-clone:latest
+docker run -d --name voiceclone -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN=hf_... ghcr.io/svayatta/pratidhvani:latest
 ```
 
 Open http://127.0.0.1:8000. The first sample takes a few minutes while the
@@ -301,7 +341,7 @@ models download into the `voiceclone` volume; later runs reuse them.
 | Follow the log | `docker logs -f voiceclone` |
 | Stop it | `docker stop voiceclone` |
 | Start it again (same settings and data) | `docker start voiceclone` |
-| Update to the newest image | `docker pull ghcr.io/svayatta/indic-voice-clone:latest`, then `docker rm -f voiceclone` and the `docker run` above |
+| Update to the newest image | `docker pull ghcr.io/svayatta/pratidhvani:latest`, then `docker rm -f voiceclone` and the `docker run` above |
 | Remove the container | `docker rm -f voiceclone` (voices and models stay in the volume) |
 | Delete all voices and downloaded models | `docker volume rm voiceclone` |
 
@@ -315,13 +355,13 @@ Any `voiceclone` subcommand runs the same way. Mount the folder with your
 recordings at `/work`:
 
 ```bash
-docker run --rm -v voiceclone:/data -v "$PWD:/work" ghcr.io/svayatta/indic-voice-clone:latest restore /work/talk.mp3 --decode-first --out /work/talk_clean.wav
+docker run --rm -v voiceclone:/data -v "$PWD:/work" ghcr.io/svayatta/pratidhvani:latest restore /work/talk.mp3 --decode-first --out /work/talk_clean.wav
 ```
 
 To check a recording for the [watermark](#watermark):
 
 ```bash
-docker run --rm -v voiceclone:/data -v "$PWD:/work" ghcr.io/svayatta/indic-voice-clone:latest detect /work/suspect.mp3
+docker run --rm -v voiceclone:/data -v "$PWD:/work" ghcr.io/svayatta/pratidhvani:latest detect /work/suspect.mp3
 ```
 
 ### Build the image yourself
@@ -329,27 +369,23 @@ docker run --rm -v voiceclone:/data -v "$PWD:/work" ghcr.io/svayatta/indic-voice
 From a checkout of this repository:
 
 ```bash
-docker build -t indic-voice-clone .
+docker build -t pratidhvani .
 ```
 
 ```bash
-docker run -d --name voiceclone -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN=hf_... indic-voice-clone
+docker run -d --name voiceclone -p 127.0.0.1:8000:8000 -v voiceclone:/data -e HF_TOKEN=hf_... pratidhvani
 ```
 
 To build for the other architecture (for example amd64 on an Apple-silicon
-Mac), use `docker buildx build --platform linux/amd64 -t indic-voice-clone --load .`.
+Mac), use `docker buildx build --platform linux/amd64 -t pratidhvani --load .`.
 It builds under emulation, so it takes longer.
 
 ### What it can't do
 
-Docker on a Mac can't use the Apple GPU, so on a Mac the image always runs on
-CPU. Cleaning, transcription and the studio are fine there, but synthesis with
-the 3B model takes minutes per sentence and training is impractical. Use the
-[native install](#native-install) on a Mac, and `:cuda` or the native install
-on an NVIDIA machine.
-
-If `docker pull` says `denied`, the package is private. Run
-`docker login ghcr.io` with a GitHub token that has `read:packages`.
+Docker on a Mac can't use the Apple GPU, so there the image always runs on
+CPU: cleaning, transcription and the studio are fine, but synthesis takes
+minutes per sentence and training is impractical. Use a
+[source install](#getting-started) on a Mac.
 
 ## Watermark
 
@@ -364,7 +400,7 @@ voiceclone detect suspect.mp3 another.wav
 ```
 
 ```
-suspect.mp3: made with indic-voice-clone (detector 1.00, 16/16 tag bits)
+suspect.mp3: made with pratidhvani (detector 1.00, 16/16 tag bits)
 another.wav: no watermark found (detector 0.00, 8/16 tag bits)
 ```
 
@@ -571,12 +607,6 @@ voiceclone build-clips --vad data/vault_talk --vad data/vad_talk --enroll data/e
 - **Clip edges.** The vault splits long speech at fixed lengths, so clips can
   start or end mid-word. `build-clips` does not detect partial edge words yet.
 
-ClearerVoice denoising (`prepare --enhance-python`) now runs speech
-enhancement only. Super-resolution is opt-in (`--steps se,sr` when running
-`python -m voiceclone.enhance.clearvoice` directly), because on archival
-lecture audio it shifted the median formants by hundreds of hertz. Use
-`--enhance-wet 0.9` to mix 10% of the original back in, as Vāṇī-Harness does.
-
 ## Troubleshooting
 
 - **Out of memory while training.** Lower `--max-tgt-sec` (default 10.5) and
@@ -589,7 +619,7 @@ lecture audio it shifted the median formants by hundreds of hertz. Use
   `other_speaker` means the enrollment clips do not match, and `score` means
   transcripts do not fit the audio, often because of noise.
 - **IndicConformer fails to download.** Accept its terms on Hugging Face
-  and run `hf auth login`.
+  and log in; see [Getting started](#getting-started).
 - **Two runs of the same command give slightly different audio.** That is
   expected: the SNAC decoder adds a little random noise, and sampling is
   random unless `--seed` is fixed.
@@ -599,7 +629,11 @@ lecture audio it shifted the median formants by hundreds of hertz. Use
 - Transcripts stay verbatim in the dialect. Pronunciation is learned from
   the audio, but the text must match what was said.
 - Restoration is mild. Aggressive denoising shifts formants, which is where
-  an accent lives.
+  an accent lives. ClearerVoice (`prepare --enhance-python`) runs speech
+  enhancement only: its super-resolution (`--steps se,sr` when running
+  `python -m voiceclone.enhance.clearvoice` directly) shifted the median
+  formants of archival lecture audio by hundreds of hertz. `--enhance-wet 0.9`
+  mixes 10% of the original back in.
 - Training uses the same reference-swap prompt as inference, so the adapter
   learns this speaker and dialect rather than a new speaker-ID token.
 - The LoRA stays unmerged at inference: merging fp32 deltas into bf16
@@ -653,28 +687,11 @@ ci/               hygiene check, gate script and runner notes
 | `ctc-forced-aligner` code / MMS weights | MIT / CC-BY-NC: use for data prep and evaluation only |
 | Audacity 3.x | GPL, used as an external tool |
 
-This repository contains code only: no recordings, transcripts or trained
-weights.
-
-## Tests
-
-```bash
-uv pip install --python .venv/bin/python -e ".[dev]" -c constraints.txt
-.venv/bin/python -m pytest
-.venv/bin/python ci/check_hygiene.py
-```
-
-The unit tests cover transliteration, transcript parsing, the Svara token and
-prompt layout, pause segmentation, take selection, the benchmark's leakage
-guard, paired comparison and listening page, the closeness report (each
-dimension blames only the change that was made), the gate's rules, recipe
-checks and the studio's API. They need no models (the cleaning tests need ffmpeg).
-`tests/test_watermark.py` needs torch and AudioSeal and is skipped without
-them; CI runs it in its own `watermark` job.
-
 ## Contributing and the quality gate
 
-Every pull request runs `ci` (tests and repository rules) on GitHub. Changes
+Run the tests and the hygiene check as in [Getting started](#getting-started)
+before opening a pull request. Every pull request runs `ci` (the same tests
+and repository rules) on GitHub. Changes
 that can affect the voice also go through `quality-gate`, which trains and
 benchmarks the pull request's recipe with the real model on a self-hosted
 runner and fails if any metric is worse than main. Experiments must also show

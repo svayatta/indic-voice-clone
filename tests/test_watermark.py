@@ -32,7 +32,7 @@ def wm():
 
 
 def test_unmarked_audio_is_not_claimed(wm):
-    # a false "made with indic-voice-clone" would accuse a genuine recording
+    # a false "made with pratidhvani" would accuse a genuine recording
     assert not wm.detect(voice_like(), SR).marked
 
 

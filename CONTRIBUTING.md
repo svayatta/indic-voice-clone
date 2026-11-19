@@ -108,14 +108,14 @@ See [ci/README.md](ci/README.md) for how the gate runner is set up.
 ## Releasing
 
 A release publishes the package to PyPI (`.github/workflows/release.yml`), so
-`uv tool install "indic-voice-clone[all]"` works anywhere, and attaches the
+`uv tool install "pratidhvani[all]"` works anywhere, and attaches the
 wheel and sdist to a GitHub release. The Docker images publish on every merge
 to `main`, separately.
 
 One-time setup (owner):
 1. On pypi.org, under Your account -> Publishing, add a pending trusted
-   publisher: project `indic-voice-clone`, owner `svayatta`, repository
-   `indic-voice-clone`, workflow `release.yml`, environment `pypi`.
+   publisher: project `pratidhvani`, owner `svayatta`, repository
+   `pratidhvani`, workflow `release.yml`, environment `pypi`.
 2. In the repository, Settings -> Environments -> New environment `pypi`, with
    yourself as required reviewer, so no release goes out unapproved.
 

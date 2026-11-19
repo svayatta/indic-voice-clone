@@ -1,5 +1,5 @@
 name: docker
-# Builds the images and pushes them to ghcr.io/<owner>/indic-voice-clone when
+# Builds the images and pushes them to ghcr.io/<owner>/pratidhvani when
 # main changes (a merged pull request):
 #   :latest  CPU torch, linux/amd64 and linux/arm64
 #   :cuda    CUDA 12.6 torch, linux/amd64 (run with --gpus all on an NVIDIA host)
