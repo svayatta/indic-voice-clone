@@ -112,8 +112,14 @@ def test_a_monotone_clone_is_far_on_pitch_range(original):
     from voiceclone.closeness import unaligned_metrics
 
     flat = {"pitch_median": 10.0, "pitch_range": 0.0, "pause_fraction": 0.2, "dynamic_range": 10.0}
-    m = unaligned_metrics(flat, {**flat, "pitch_range": 4.0}, same_words=True)
-    assert m["pitch_range_ratio"] == 0.0 and band("pitch_range_ratio", m["pitch_range_ratio"]) == "far"
+    lively = {**flat, "pitch_range": 4.0}
+
+    def range_band(clone, orig):
+        return band("pitch_range_ratio", unaligned_metrics(clone, orig, same_words=True)["pitch_range_ratio"])
+
+    assert range_band(flat, lively) == "far"     # monotone clone of a lively original
+    assert range_band(lively, flat) == "far"     # lively clone of a monotone original
+    assert range_band(flat, flat) == "close"     # both flat: the same, not missing
 
 
 def test_a_quiet_chunk_is_measured_with_its_own_speech_mask(original):
@@ -125,6 +131,9 @@ def test_a_quiet_chunk_is_measured_with_its_own_speech_mask(original):
     level = rep["dimensions"]["pitch"]["metrics"]["pitch_median_st"]["value"]
     assert level == pytest.approx(2, abs=0.5)   # half the speaking time is 4 semitones off
     assert [c["pair"] for c in rep["contours"]] == [0, 1]   # the figure shows every pair
+    # each caption gives his speaking time, not the length of the file with its pauses
+    for c, m in zip(rep["contours"], rep["per_pair"]):
+        assert c["seconds"] == round(m["speech_s_original"], 1) < len(original) / SR
 
 
 def test_pairs_count_by_speaking_time_not_by_number(original):

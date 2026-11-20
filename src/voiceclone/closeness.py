@@ -41,6 +41,7 @@ SPEECH_BELOW_PEAK_DB = 30.0     # and within this of loud speech (95th percentil
 MAX_DTW_CELLS = 25_000_000      # frames(clone) x frames(original); about 50 s x 50 s. Longer pairs are skipped
 MIN_FRAMES_FOR_CORR = 20        # fewer aligned frames than this give no contour correlation
 TIMBRE_PITCH_MATCH_ST = 1.0     # timbre compares only frames whose pitches are this close (or both unvoiced)
+PITCH_RANGE_FLOOR_ST = 0.1      # ranges below this are flat: both sides are raised to it, so flat vs flat is 1x
 MIN_TIMBRE_FRAMES = 20          # fewer such frames than this: timbre is not measured
 BASELINE_SAME_TAKE = 0.98       # a baseline this similar to the original is the same take, not another recording
 BASELINE_TOO_LOW = 0.50         # below this the baseline is likely another speaker or unusable audio
@@ -197,8 +198,8 @@ def unaligned_metrics(sc: dict, so: dict, same_words: bool) -> dict:
     compared only for the same words."""
     return {
         "pitch_median_st": _absdiff(sc["pitch_median"], so["pitch_median"]),
-        "pitch_range_ratio": (sc["pitch_range"] / so["pitch_range"]
-                              if sc["pitch_range"] is not None and so["pitch_range"] else None),
+        "pitch_range_ratio": (max(sc["pitch_range"], PITCH_RANGE_FLOOR_ST) / max(so["pitch_range"], PITCH_RANGE_FLOOR_ST)
+                              if sc["pitch_range"] is not None and so["pitch_range"] is not None else None),
         "pause_fraction_diff": _absdiff(sc["pause_fraction"], so["pause_fraction"]) if same_words else None,
         "dynamic_range_diff_db": _absdiff(sc["dynamic_range"], so["dynamic_range"]),
     }
@@ -292,7 +293,7 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
             m.update(a)
         aligned = "contour" in m
         cc, co = m.pop("contour") if aligned else (fc["st"], fo["st"])
-        contours.append({"pair": n, "seconds": round(len(o) / SR, 1), "aligned": aligned,
+        contours.append({"pair": n, "seconds": round(m["speech_s_original"], 1), "aligned": aligned,
                          "clone": _downsample(cc), "original": _downsample(co)})
         per_pair.append(m)
 
