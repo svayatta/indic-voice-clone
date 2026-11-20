@@ -205,6 +205,16 @@ def test_a_baseline_that_is_the_same_take_or_another_speaker_is_refused(original
         closeness([(original, original)], False, encoder=Encoder(np.array([1.0, 0.0])), baseline=baseline)
     with pytest.raises(ValueError, match="another speaker"):
         closeness([(original, original)], False, encoder=Encoder(np.array([0.2, np.sqrt(0.96)])), baseline=baseline)
+    # the same holds for the second model: ECAPA accepting the baseline must not let the ResNet
+    # divide by a cosine of 0.2, which would turn a clone at 0.3 into a ratio of 1.5, "close"
+    ok = Encoder(np.array([0.8, 0.6]))
+    with pytest.raises(ValueError, match="ResNet.*another speaker"):
+        closeness([(original, original)], False, encoder=ok, encoder2=Encoder(np.array([0.2, np.sqrt(0.96)])),
+                  baseline=baseline)
+    with pytest.raises(ValueError, match="ResNet.*same take"):
+        closeness([(original, original)], False, encoder=ok, encoder2=Encoder(np.array([1.0, 0.0])),
+                  baseline=baseline)
+    closeness([(original, original)], False, encoder=ok, encoder2=ok, baseline=baseline)   # a sound baseline passes
 
 
 class ByLength:

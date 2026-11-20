@@ -194,6 +194,17 @@ def _cosines(encoder, clone, orig, baseline):
     return float(np.dot(encoder.embed(clone), eo)), base
 
 
+def _check_baseline(cos, model):
+    """Refuse a baseline that is the same take or not him, by either speaker model: dividing by its
+    cosine would make every clone look poor (same take) or a mediocre one look close (another speaker)."""
+    if cos is not None and not BASELINE_TOO_LOW <= cos < BASELINE_SAME_TAKE:
+        raise ValueError(
+            f"the baseline's {model} voiceprint cosine to the original is {cos:.2f}: "
+            + ("it is the same take, not another recording of him" if cos >= BASELINE_SAME_TAKE else
+               f"below {BASELINE_TOO_LOW}, so it is likely another speaker or unusable audio")
+            + "; pass a different --baseline")
+
+
 def _worst(bands):
     bands = [b for b in bands if b is not None]
     return max(bands, key=_ORDER.get) if bands else None
@@ -370,17 +381,13 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
     orig = np.concatenate([np.asarray(o, np.float32) for _, o in pairs])
     if encoder is not None:
         sim, ident_base = _cosines(encoder, clone, orig, baseline)
-        if ident_base is not None and not BASELINE_TOO_LOW <= ident_base < BASELINE_SAME_TAKE:
-            raise ValueError(
-                f"the baseline's voiceprint cosine to the original is {ident_base:.2f}: "
-                + ("it is the same take, not another recording of him" if ident_base >= BASELINE_SAME_TAKE else
-                   f"below {BASELINE_TOO_LOW}, so it is likely another speaker or unusable audio")
-                + "; pass a different --baseline")
+        _check_baseline(ident_base, "ECAPA")
         values["identity"], keys["identity"] = identity_metric(sim, ident_base)
         base_values["identity"] = 1.0 if ident_base is not None else None
         values["identity_cosine"], base_values["identity_cosine"] = sim, ident_base
     if encoder2 is not None:
         sim2, base2 = _cosines(encoder2, clone, orig, baseline)
+        _check_baseline(base2, "ResNet")   # a ratio over a baseline of 0.2 would make a 0.3 clone "close"
         values["identity_resnet"], keys["identity_resnet"] = identity_metric(sim2, base2, "identity_resnet")
         base_values["identity_resnet"] = 1.0 if base2 is not None else None
         values["identity_resnet_cosine"], base_values["identity_resnet_cosine"] = sim2, base2
