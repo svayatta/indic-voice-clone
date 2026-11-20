@@ -74,7 +74,8 @@ def test_a_higher_voice_fails_pitch_and_nothing_else(original):
     rep = closeness([(clone, original)], same_words=True)
     pitch = rep["dimensions"]["pitch"]["metrics"]
     assert pitch["pitch_median_st"]["value"] == pytest.approx(4, abs=0.6)   # it measures the shift itself
-    assert bands(rep) == {"identity": None, "timbre": None, "pitch": "far", "rhythm": "close", "energy": "close"}
+    assert bands(rep) == {"identity": None, "timbre": None, "pitch": "far", "rhythm": "close", "energy": "close",
+                          "naturalness": None}
     # harmonics 4 semitones apart sample the same vocal tract at other frequencies; scored anyway, the
     # pitch change read as a timbre distance of about 20 dB ("far"), sending the next experiment after
     # the voice instead of the pitch. Timbre is left out, and the report says why.
@@ -84,7 +85,8 @@ def test_a_higher_voice_fails_pitch_and_nothing_else(original):
 def test_another_vocal_tract_fails_timbre_and_nothing_else(original):
     clone = speech(0, formants=1.3)   # same words, timing and pitch, formants 30% higher
     rep = closeness([(clone, original)], same_words=True)
-    assert bands(rep) == {"identity": None, "timbre": "far", "pitch": "close", "rhythm": "close", "energy": "close"}
+    assert bands(rep) == {"identity": None, "timbre": "far", "pitch": "close", "rhythm": "close", "energy": "close",
+                          "naturalness": None}
 
 
 def test_slower_speech_fails_rhythm_but_keeps_its_pitch(original):
@@ -92,7 +94,8 @@ def test_slower_speech_fails_rhythm_but_keeps_its_pitch(original):
     rep = closeness([(clone, original)], same_words=True)
     rhythm = rep["dimensions"]["rhythm"]["metrics"]
     assert rhythm["speech_duration_ratio"]["value"] == pytest.approx(1 / 0.65, rel=0.1)
-    assert bands(rep) == {"identity": None, "timbre": "close", "pitch": "close", "rhythm": "far", "energy": "close"}
+    assert bands(rep) == {"identity": None, "timbre": "close", "pitch": "close", "rhythm": "far", "energy": "close",
+                          "naturalness": None}
 
 
 def test_alignment_metrics_are_not_computed_for_different_words(original):
@@ -104,7 +107,8 @@ def test_alignment_metrics_are_not_computed_for_different_words(original):
     # pause share depends on the sentence, so different words leave rhythm unscored, not red
     assert rep["dimensions"]["rhythm"]["metrics"]["pause_fraction_diff"]["value"] is None
     # the same speaker's pitch level, range and loudness spread are still comparable
-    assert bands(rep) == {"identity": None, "timbre": None, "pitch": "close", "rhythm": None, "energy": "close"}
+    assert bands(rep) == {"identity": None, "timbre": None, "pitch": "close", "rhythm": None, "energy": "close",
+                          "naturalness": None}
 
 
 def test_a_monotone_clone_is_far_on_pitch_range(original):
@@ -203,6 +207,92 @@ def test_a_baseline_that_is_the_same_take_or_another_speaker_is_refused(original
         closeness([(original, original)], False, encoder=Encoder(np.array([0.2, np.sqrt(0.96)])), baseline=baseline)
 
 
+class ByLength:
+    """Stands in for a speaker model: each recording (told apart by its length, since the
+    pairs are concatenated before embedding) has a fixed voiceprint at `cos` to (1, 0)."""
+
+    def __init__(self, cos_by_length):
+        self.cos = cos_by_length
+
+    def embed(self, y):
+        c = self.cos[len(y)]
+        return np.array([c, np.sqrt(1 - c * c)])
+
+
+def test_a_second_model_that_disagrees_drags_identity_down(original):
+    # ECAPA can be fooled: a clone that matches what ECAPA attends to scores as high as his own
+    # recordings. If the ResNet hears another voice, identity must not be reported close on
+    # ECAPA's word alone, or one model's blind spot becomes the report's.
+    clone, baseline = speech(3), speech(5)
+    lengths = {len(original): 1.0, len(clone): 0.8, len(baseline): 0.8}
+    assert len(lengths) == 3
+    ecapa = ByLength(lengths)                                  # clone as close as his own other recording
+    resnet = ByLength({**lengths, len(clone): 0.3})           # clone far below his own other recording
+    alone = closeness([(clone, original)], False, encoder=ecapa, baseline=baseline)
+    assert alone["dimensions"]["identity"]["band"] == "close"
+    both = closeness([(clone, original)], False, encoder=ecapa, baseline=baseline, encoder2=resnet)
+    ident = both["dimensions"]["identity"]
+    assert ident["metrics"]["identity"]["band"] == "close"    # ECAPA's own row still says what it saw
+    assert ident["metrics"]["identity_resnet"]["value"] == pytest.approx(0.3 / 0.8)
+    assert ident["metrics"]["identity_resnet"]["band"] == "far"
+    assert ident["band"] == "far"
+    # without another recording of him the ResNet's scale is uncalibrated: shown, never banded on a guess
+    nobase = closeness([(clone, original)], False, encoder=ecapa, encoder2=resnet)
+    row = nobase["dimensions"]["identity"]["metrics"]["identity_resnet"]
+    assert row["value"] == pytest.approx(0.3) and row["band"] is None
+
+
+class Mos:
+    """Stands in for UTMOS: a fixed predicted MOS per recording."""
+
+    def __init__(self, scores):
+        self.scores = scores
+
+    def predict(self, y):
+        return next(s for a, s in self.scores if a is y)
+
+
+def test_naturalness_judges_the_gap_to_his_recording_not_the_score(original):
+    # archival tape scores about 2 on UTMOS however natural he sounds. Judged on the score,
+    # every clone of a tape would be "far"; judged on the gap, a clone that sounds as natural
+    # as his tape is close, and one far below a clean recording is far.
+    clone = speech(3)
+
+    def gap(clone_mos, orig_mos, baseline=None):
+        scores = [(clone, clone_mos), (original, orig_mos)] + ([(baseline[0], baseline[1])] if baseline else [])
+        rep = closeness([(clone, original)], False, mos=Mos(scores), baseline=baseline[0] if baseline else None)
+        return rep["dimensions"]["naturalness"]
+
+    tape = gap(2.0, 2.1)
+    assert tape["band"] == "close"
+    assert tape["metrics"]["naturalness_gap"]["value"] == pytest.approx(0.1)
+    assert tape["metrics"]["mos_clone"]["value"] == 2.0   # the scores themselves are shown, not banded
+    assert gap(2.0, 3.9)["band"] == "far"                 # the same 2.0 below a clean recording
+    assert gap(4.2, 2.1)["band"] == "close"               # cleaner than the tape is not less natural
+    # his own recordings already 0.6 apart: a clone 0.5 below this one is within his spread
+    assert gap(2.0, 2.5)["band"] == "noticeably different"
+    assert gap(2.0, 2.5, baseline=(speech(5), 3.1))["band"] == "close"
+
+
+def test_a_missing_extra_reports_not_measured_instead_of_failing(tmp_path, monkeypatch, capsys, original):
+    # the core install has no torch or speechbrain; the command must still report the other
+    # dimensions and say which rows it could not measure, not crash or leave them out silently
+    import sys
+
+    for mod in ("torch", "speechbrain", "voiceclone.utmos"):
+        monkeypatch.setitem(sys.modules, mod, None)
+    write_wav(tmp_path / "o.wav", original, SR)
+    main(["closeness", "--clone", str(tmp_path / "o.wav"), "--original", str(tmp_path / "o.wav"),
+          "--out", str(tmp_path / "out")])
+    out = capsys.readouterr().out
+    assert "identity not measured" in out and "naturalness not measured" in out
+    assert "Naturalness: not measured" in out and "Identity: not measured" in out
+    data = json.loads((tmp_path / "out" / "closeness.json").read_text())
+    assert data["dimensions"]["naturalness"]["band"] is None
+    assert data["dimensions"]["identity"]["metrics"]["identity_resnet"]["value"] is None
+    assert data["dimensions"]["pitch"]["band"] == "close"   # the rest is still measured
+
+
 def clips(path, files):
     path.mkdir(parents=True)
     (path / "metadata.jsonl").write_text("".join(json.dumps({"file": f, "text": "x"}) + "\n" for f in files))
@@ -272,6 +362,6 @@ def test_report_files_name_every_dimension_and_embed_the_audio(tmp_path, origina
     rep = closeness([(original, original)], same_words=True)
     write_report(rep, tmp_path / "out", audio=[("original", tmp_path / "o.wav")])
     data = json.loads((tmp_path / "out" / "closeness.json").read_text())
-    assert set(data["dimensions"]) == {"identity", "timbre", "pitch", "rhythm", "energy"}
+    assert set(data["dimensions"]) == {"identity", "timbre", "pitch", "rhythm", "energy", "naturalness"}
     html = (tmp_path / "out" / "closeness.html").read_text()
     assert "data:audio/wav;base64," in html and "Pitch" in html and "not measured" in html

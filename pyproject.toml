@@ -16,9 +16,11 @@ dependencies = ["numpy", "soundfile", "librosa"]
 tts = ["torch", "torchaudio", "transformers", "accelerate", "peft", "snac", "safetensors", "huggingface_hub", "audioseal"]
 align = ["ctc-forced-aligner", "onnxruntime==1.20.1", "unidecode"]
 speaker = ["torch", "torchaudio", "speechbrain"]
+# `closeness` identity (ECAPA + SpeechBrain ResNet) and naturalness (UTMOS22, vendored in voiceclone/utmos.py)
+closeness = ["pratidhvani[speaker]"]
 asr = ["torch", "torchaudio", "transformers"]
 web = ["fastapi", "uvicorn", "python-multipart"]
-all = ["pratidhvani[tts,align,speaker,asr,web]"]
+all = ["pratidhvani[tts,align,speaker,closeness,asr,web]"]
 dev = ["pytest", "httpx2", "pratidhvani[web]"]
 # ClearerVoice pins numpy<2: install `clearvoice` in a separate environment
 # and pass its python to `voiceclone prepare --enhance-python`.

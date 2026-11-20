@@ -111,6 +111,7 @@ aligner needs a C++ compiler once (`xcode-select --install` on a Mac,
 (Python 3.12, macOS arm64). Leave it out to take the newest releases, at the
 risk of behaviour changes. The extras are `tts` for synthesis and training,
 `align` for forced alignment and character error, `speaker` for voiceprints,
+`closeness` for the closeness report's identity and naturalness models,
 `asr` for IndicConformer, `web` for the studio, `dev` for the tests, and `all`
 for everything except `dev`.
 
@@ -524,10 +525,10 @@ out the real recording is guessing, so weigh their answers accordingly.
 
 **6. See where a clone falls short.** `compare` says whether a run is better;
 `closeness` says in what way one clone differs from him, so you know what to
-fix next. It reports five dimensions, each banded close, noticeably different
-or far: identity (ECAPA voiceprint), timbre, pitch (level, range,
-intonation), rhythm (pace, pauses) and energy (loudness spread, stress).
-There is no overall score on purpose.
+fix next. It reports six dimensions, each banded close, noticeably different
+or far: identity (two independent speaker models), timbre, pitch (level,
+range, intonation), rhythm (pace, pauses), energy (loudness spread, stress)
+and naturalness (predicted MOS). There is no overall score on purpose.
 
 ```bash
 # best: a long-form folder, which pairs every clone chunk with his own words
@@ -548,6 +549,19 @@ Pass `--lora` to refuse an original the adapter trained on; `--original-source`
 names its recording tag (such as K06) when the file name doesn't, as for a
 long-form folder. It writes `closeness.html` (audio, table and a pitch
 contour per pair) and `closeness.json`. The timbre thresholds are provisional.
+
+Identity asks two speaker models with different architectures, SpeechBrain's
+ECAPA-TDNN and ResNet-TDNN, and takes the worse band, so a clone that fools
+one model but not the other is not reported close. The ResNet's cosines have
+not been calibrated on his recordings, so without `--baseline` they are shown
+but not banded. Naturalness runs UTMOS (a predictor of the 1-5 score
+listeners give) on both the clone and his recording and bands the gap, not
+the score: archival tape scores low on its own, and a clone is judged by how
+far below his recording it falls. Its thresholds are provisional too. Both
+need the `closeness` extra; without it those rows read "not measured" and
+the rest of the report is unchanged. `--no-identity` and `--no-naturalness`
+skip them. The UTMOS weights (411 MB) are downloaded on first use into
+`--utmos-dir` and checked against a pinned SHA-256.
 
 ## Command reference
 
@@ -571,7 +585,7 @@ for every option.
 | Voice similarity | `eval-similarity --clips data/clips --samples outputs/synth` | ECAPA cosine vs real clips |
 | Intelligibility | `eval-intelligibility --clips data/clips --samples outputs/synth` | character error vs real clips |
 | Same-words test | `long-form --lora models/lora --chunks data/vad_X --source X.wav --ref clip.wav --ref-text-file ref.txt --out outputs/long` | clone vs original, A/B file |
-| Closeness report | `closeness --long-form outputs/long --baseline real.wav --out outputs/closeness` | identity, timbre, pitch, rhythm, energy, banded |
+| Closeness report | `closeness --long-form outputs/long --baseline real.wav --out outputs/closeness` | identity, timbre, pitch, rhythm, energy, naturalness, banded |
 | Benchmark a run | `benchmark --spec data/bench.json --lora models/lora --out outputs/bench/lora` | scores + `results.jsonl` row |
 | Compare two runs | `compare outputs/bench/A outputs/bench/B` | paired differences, 95% interval |
 | Blind listening | `listen-page outputs/bench/A outputs/bench/B --out listen.html` | A/B page + answer key |
@@ -669,6 +683,7 @@ src/voiceclone/
   compare.py      paired bootstrap comparison and listening win rates
   listen.py       blind A/B listening page
   closeness.py    how close one clone is to the original, dimension by dimension
+  utmos.py        UTMOS22 naturalness predictor (vendored, MIT)
   postprocess.py  trim to text
   longform.py     same-words re-voicing
   enhance/        ClearerVoice and Audacity 3.x denoisers
@@ -688,6 +703,8 @@ ci/               hygiene check, gate script and runner notes
 | AudioSeal watermark (code and weights) | MIT |
 | AI4Bharat IndicConformer 600M | MIT |
 | SpeechBrain ECAPA-TDNN | Apache 2.0 |
+| SpeechBrain ResNet-TDNN (`spkrec-resnet-voxceleb`, second speaker model in `closeness`) | Apache 2.0 |
+| UTMOS22 strong learner (code vendored from SpeechMOS v1.2.0, weights converted from the official checkpoint) | MIT (code and weights) |
 | ClearerVoice MossFormer2 | Apache 2.0 |
 | `ctc-forced-aligner` code / MMS weights | MIT / CC-BY-NC: use for data prep and evaluation only |
 | Audacity 3.x | GPL, used as an external tool |

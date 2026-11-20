@@ -4,14 +4,17 @@
 similarity number. This answers "where does this clone fall short of him",
 one dimension at a time, so the next change can target it:
 
-  identity  ECAPA voiceprint cosine, as a fraction of what two real
-            recordings of him reach (or absolute, without a second recording)
+  identity  voiceprint cosine from two independent speaker models (ECAPA and
+            a ResNet), each as a fraction of what two real recordings of him
+            reach (ECAPA also absolute, without a second recording)
   timbre    spectral-envelope distance on the same words (MCD-style), only
             where the two pitches match: harmonics sample the envelope, so a
             pitch change alone would otherwise read as a different timbre
   pitch     median level and range (any words); intonation contour (same words)
   rhythm    speaking time for the same words; share of time spent in pauses
   energy    loud-to-quiet spread (any words); stress contour (same words)
+  naturalness  predicted MOS (UTMOS) of the clone minus that of the original:
+            the gap, not the score, because archival tape itself scores low
 
 Metrics that compare frame by frame need the same words in both recordings
 (`long-form` writes such pairs). For different words they are left out, not
@@ -82,6 +85,32 @@ THRESHOLDS = {
         "low", 6.0, 9.0, "timbre distance (MCD-like)", "dB",
         "Spectral-envelope distance on the same words after time alignment. Provisional thresholds: typical "
         "TTS systems report 4-8 dB MCD; to be calibrated on real clone/original pairs."),
+    # The second speaker model has its own cosine scale, so it gets its own cutoffs. Both identity
+    # rows share the dimension's worst band: one model's bias cannot make a clone look close.
+    "identity_resnet": Threshold(
+        "high", 0.90, 0.75, "voice identity, as a fraction of his own (ResNet, second model)", "",
+        "ResNet-TDNN cosine of clone vs original, divided by its cosine of another real recording of him vs "
+        "the original. A different architecture from ECAPA: a clone that fools one model but not the other "
+        "is not close. Same reasoning for 0.9 as for ECAPA."),
+    "identity_resnet_absolute": Threshold(
+        "info", 0.0, 0.0, "voiceprint cosine to the original (ResNet, second model)", "",
+        "Not banded without --baseline: this model's cosines have not been calibrated on his recordings, so "
+        "an absolute cutoff would be a guess. Pass another real recording of him to band it."),
+    "identity_resnet_cosine": Threshold(
+        "info", 0.0, 0.0, "voiceprint cosine to the original (ResNet)", "",
+        "Raw ResNet cosines, shown for reference; the band comes from the ratio above."),
+    "naturalness_gap": Threshold(
+        "low", 0.3, 0.8, "naturalness shortfall: his predicted MOS minus the clone's", "MOS",
+        "UTMOS predicts a listener's 1-5 naturalness score. Archival tape scores low on its own, so the clone "
+        "is judged by how far below his recording it falls (a clone that scores higher is close). Provisional: "
+        "single predictions are off by several tenths of a point, so 0.3 is within its noise; 0.8 is most of "
+        "a step on the 5-point scale. With --baseline, the spread between his own recordings counts as close."),
+    "mos_clone": Threshold(
+        "info", 0.0, 0.0, "predicted MOS of the clone (UTMOS)", "",
+        "Shown for reference; the band comes from the gap above."),
+    "mos_original": Threshold(
+        "info", 0.0, 0.0, "predicted MOS of his recording (UTMOS)", "",
+        "Low on tape whatever the clone does; the other-recording column is the baseline's score."),
     "identity_cosine": Threshold(
         "info", 0.0, 0.0, "voiceprint cosine to the original", "",
         "Raw ECAPA cosines, shown for reference; the band comes from the ratio above."),
@@ -112,12 +141,15 @@ THRESHOLDS = {
 }
 
 DIMENSIONS = {
-    "identity": ("Identity", ["identity", "identity_cosine"]),
+    "identity": ("Identity", ["identity", "identity_cosine", "identity_resnet", "identity_resnet_cosine"]),
     "timbre": ("Timbre", ["timbre_distance_db"]),
     "pitch": ("Pitch", ["pitch_median_st", "pitch_range_ratio", "pitch_contour_corr"]),
     "rhythm": ("Rhythm", ["speech_duration_ratio", "pause_fraction_diff"]),
     "energy": ("Energy", ["dynamic_range_diff_db", "energy_contour_corr"]),
+    "naturalness": ("Naturalness", ["naturalness_gap", "mos_clone", "mos_original"]),
 }
+# ratios to his own similarity: their baseline is 1.0 by definition and must not move the cutoffs
+RELATIVE = {"identity", "identity_resnet"}
 
 
 def _distance(kind, value):
@@ -148,11 +180,18 @@ def band(key: str, value, baseline=None) -> str | None:
     return CLOSE if x <= close else DIFFERENT if x <= different else FAR
 
 
-def identity_metric(sim: float, baseline: float | None) -> tuple[float, str]:
+def identity_metric(sim: float, baseline: float | None, key: str = "identity") -> tuple[float, str]:
     """(value, threshold key): relative to his own real-vs-real similarity when there is one."""
     if baseline is not None and baseline > 0:
-        return sim / baseline, "identity"
-    return sim, "identity_absolute"
+        return sim / baseline, key
+    return sim, f"{key}_absolute"
+
+
+def _cosines(encoder, clone, orig, baseline):
+    """(clone vs original, baseline vs original) voiceprint cosines; the second is None without a baseline."""
+    eo = encoder.embed(orig)
+    base = float(np.dot(encoder.embed(np.asarray(baseline, np.float32)), eo)) if baseline is not None else None
+    return float(np.dot(encoder.embed(clone), eo)), base
 
 
 def _worst(bands):
@@ -268,11 +307,14 @@ def _downsample(xs, n=400):
 
 
 # ---------- report ----------
-def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None = None) -> dict:
+def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None = None,
+              encoder2=None, mos=None) -> dict:
     """Report for (clone, original) waveform pairs at 16 kHz.
 
     same_words: each pair says the same words (enables the aligned metrics).
     encoder: anything with .embed(y16) -> unit vector (SpeakerEncoder); None skips identity.
+    encoder2: a second, independent speaker model (the ResNet); None leaves its rows unmeasured.
+    mos: anything with .predict(y16) -> MOS (MosPredictor); None skips naturalness.
     baseline: another real recording of the speaker (different words). What his own
     recordings already differ by then counts as close (see `cutoffs`).
 
@@ -286,6 +328,8 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
         m = {"speech_s_original": float(fo["speech"].sum() * HOP / SR), **unaligned_metrics(stats(fc), so, same_words)}
         if fb is not None:
             m["baseline"] = unaligned_metrics(stats(fb), so, same_words)
+        if mos is not None:
+            m["mos_clone"], m["mos_original"] = mos.predict(c), mos.predict(o)
         if same_words:
             a = aligned_metrics(fc, fo)
             if "skipped" in a:
@@ -314,13 +358,18 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
             skipped.append("timbre: too few frames where the clone's pitch is within "
                            f"{TIMBRE_PITCH_MATCH_ST:g} semitone of his; fix the pitch level first")
 
+    mc, mo = _weighted(per_pair, "mos_clone"), _weighted(per_pair, "mos_original")
+    if mc is not None and mo is not None:   # None without a predictor, or when no pair has speech
+        mb = mos.predict(baseline) if baseline is not None else None
+        values["naturalness_gap"], values["mos_clone"], values["mos_original"] = mo - mc, mc, mo
+        base_values["naturalness_gap"] = abs(mo - mb) if mb is not None else None
+        base_values["mos_original"] = mb
+
     keys = {k: k for k in THRESHOLDS}
+    clone = np.concatenate([np.asarray(c, np.float32) for c, _ in pairs])
+    orig = np.concatenate([np.asarray(o, np.float32) for _, o in pairs])
     if encoder is not None:
-        clone = np.concatenate([np.asarray(c, np.float32) for c, _ in pairs])
-        orig = np.concatenate([np.asarray(o, np.float32) for _, o in pairs])
-        eo = encoder.embed(orig)
-        sim = float(np.dot(encoder.embed(clone), eo))
-        ident_base = float(np.dot(encoder.embed(np.asarray(baseline, np.float32)), eo)) if baseline is not None else None
+        sim, ident_base = _cosines(encoder, clone, orig, baseline)
         if ident_base is not None and not BASELINE_TOO_LOW <= ident_base < BASELINE_SAME_TAKE:
             raise ValueError(
                 f"the baseline's voiceprint cosine to the original is {ident_base:.2f}: "
@@ -330,6 +379,11 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
         values["identity"], keys["identity"] = identity_metric(sim, ident_base)
         base_values["identity"] = 1.0 if ident_base is not None else None
         values["identity_cosine"], base_values["identity_cosine"] = sim, ident_base
+    if encoder2 is not None:
+        sim2, base2 = _cosines(encoder2, clone, orig, baseline)
+        values["identity_resnet"], keys["identity_resnet"] = identity_metric(sim2, base2, "identity_resnet")
+        base_values["identity_resnet"] = 1.0 if base2 is not None else None
+        values["identity_resnet_cosine"], base_values["identity_resnet_cosine"] = sim2, base2
 
     dims = {}
     for d, (label, metrics) in DIMENSIONS.items():
@@ -337,8 +391,8 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
         for m in metrics:
             t = THRESHOLDS[keys[m]]
             v, b = values.get(m), base_values.get(m)
-            close, different = cutoffs(keys[m], b if m != "identity" else None)
-            rows[m] = {"value": v, "baseline": b, "band": band(keys[m], v, b if m != "identity" else None),
+            close, different = cutoffs(keys[m], b if m not in RELATIVE else None)
+            rows[m] = {"value": v, "baseline": b, "band": band(keys[m], v, b if m not in RELATIVE else None),
                        "label": t.label, "unit": t.unit, "why": t.why,
                        "threshold": {"kind": t.kind, "close": close, "different": different}}
         dims[d] = {"label": label, "band": _worst(r["band"] for r in rows.values()), "metrics": rows}

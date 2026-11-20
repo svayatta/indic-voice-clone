@@ -289,16 +289,25 @@ def cmd_closeness(a):
         leak = check_leak([source] if source else [], a.lora, a.train_clips, a.allow_leak)
     except LeakError as e:
         sys.exit(str(e))
-    encoder = None
+    encoder = encoder2 = mos = None
     if not a.no_identity:
         try:
-            from voiceclone.speaker import SpeakerEncoder
+            from voiceclone.speaker import RESNET_ID, SpeakerEncoder
 
             encoder = SpeakerEncoder(a.ecapa_dir)
+            encoder2 = SpeakerEncoder(a.resnet_dir, source=RESNET_ID)
         except ImportError:
-            _log("identity not measured: install the speaker extra (.[speaker]) or pass --no-identity")
+            _log("identity not measured: install the closeness extra (.[closeness]) or pass --no-identity")
+    if not a.no_naturalness:
+        try:
+            from voiceclone.utmos import MosPredictor
+
+            mos = MosPredictor(a.utmos_dir)
+        except ImportError:
+            _log("naturalness not measured: install the closeness extra (.[closeness]) or pass --no-naturalness")
     try:
-        rep = closeness(pairs, same_words, encoder=encoder, baseline=load16(a.baseline) if a.baseline else None)
+        rep = closeness(pairs, same_words, encoder=encoder, baseline=load16(a.baseline) if a.baseline else None,
+                        encoder2=encoder2, mos=mos)
     except ValueError as e:
         sys.exit(str(e))
     rep["leak"] = leak
@@ -501,7 +510,8 @@ def build_parser() -> argparse.ArgumentParser:
     ecapa(p)
 
     p = add("closeness", cmd_closeness,
-            "How close is a clone to the original recording? Identity, timbre, pitch, rhythm and energy, each banded")
+            "How close is a clone to the original recording? Identity, timbre, pitch, rhythm, energy and "
+            "naturalness, each banded")
     p.add_argument("--clone", default=None, help="the cloned audio")
     p.add_argument("--original", default=None, help="the real recording to compare with (held out from training)")
     p.add_argument("--same-words", action="store_true",
@@ -509,7 +519,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--long-form", default=None, help="a `long-form` output folder: compares each chunk with his words")
     p.add_argument("--baseline", default=None,
                    help="another real recording of him, so each number is shown next to what his own recordings reach")
-    p.add_argument("--no-identity", action="store_true", help="skip the ECAPA voiceprint (no speechbrain needed)")
+    p.add_argument("--no-identity", action="store_true",
+                   help="skip the ECAPA and ResNet voiceprints (no speechbrain needed)")
+    p.add_argument("--no-naturalness", action="store_true", help="skip the UTMOS naturalness predictor (no torch needed)")
+    p.add_argument("--resnet-dir", default="models/spk-resnet", help="where the second speaker model is cached")
+    p.add_argument("--utmos-dir", default="models/utmos", help="where the UTMOS weights (411 MB) are cached")
     p.add_argument("--lora", default=None, help="adapter that made the clone: refuses an original it trained on")
     p.add_argument("--train-clips", action="append", default=None,
                    help="clip folder(s) the adapter trained on, if its train_log.json cannot say")

@@ -1,17 +1,18 @@
-"""Speaker voiceprints with SpeechBrain ECAPA-TDNN (Apache 2.0)."""
+"""Speaker voiceprints with SpeechBrain ECAPA-TDNN, or its ResNet-TDNN as a second opinion (both Apache 2.0)."""
 import random
 from pathlib import Path
 
 import numpy as np
 
 ECAPA_ID = "speechbrain/spkrec-ecapa-voxceleb"
+RESNET_ID = "speechbrain/spkrec-resnet-voxceleb"   # another architecture: a check on ECAPA's own biases
 
 
 class SpeakerEncoder:
-    def __init__(self, savedir="models/ecapa", device: str = "cpu"):
+    def __init__(self, savedir="models/ecapa", device: str = "cpu", source: str = ECAPA_ID):
         from speechbrain.inference.speaker import EncoderClassifier
 
-        self.enc = EncoderClassifier.from_hparams(source=ECAPA_ID, savedir=str(savedir),
+        self.enc = EncoderClassifier.from_hparams(source=source, savedir=str(savedir),
                                                   run_opts={"device": device})
 
     def embed(self, y16: np.ndarray) -> np.ndarray:
