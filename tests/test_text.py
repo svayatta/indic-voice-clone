@@ -86,6 +86,19 @@ def test_nukta_letters_and_candra_vowels():
     assert translit("डॉक्टर") == "doktara"     # candra o, as in English loanwords
 
 
+@pytest.mark.parametrize("word, roman", [
+    ("என்ன", "enna"), ("மழை", "malai"),                       # Tamil ன and ழ have no Kannada twin
+    ("അവൻ", "avan"), ("അവൾ", "aval"), ("അവർ", "avar"),       # Malayalam chillu letters
+    ("കൽ", "kal"), ("മഴ", "mala"), ("অকস্মাৎ", "akasmaat"),     # Malayalam ഴ, Bengali khanda ta
+])
+def test_letters_without_a_kannada_twin_are_kept(word, roman):
+    assert translit(word) == roman
+
+
+def test_syllables_count_letters_without_a_kannada_twin():
+    assert syllables("என்ன") == 2
+
+
 def test_kannada_unchanged_by_script_mapping():
     assert translit("ನಿಮ್ಮ") == "nimma" and translit("ಕ್ಷಮಾ") == "kshamaa"
 

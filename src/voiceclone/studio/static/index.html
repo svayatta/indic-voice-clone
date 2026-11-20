@@ -78,12 +78,6 @@
           <div class="opt-group" id="o-create-reference"></div>
         </details>
 
-        <details class="more">
-          <summary>I know exactly what is said in the sample (optional)</summary>
-          <p class="muted small">Leave empty and it is transcribed automatically. Only fill this in if it matches the audio word for word.</p>
-          <textarea id="f-text" rows="2" maxlength="1000" lang="kn"></textarea>
-        </details>
-
         <p id="create-error" class="error" role="alert" hidden></p>
         <div class="actions"><button id="create-submit" class="btn btn-accent" type="submit">Clone voice</button></div>
       </form>
@@ -120,7 +114,7 @@
 
       <div class="card" id="v-ref-card" hidden>
         <h3>Reference clip</h3>
-        <p class="muted small">The clone is modelled on this part of the sample. Its words must match the audio exactly; correct them if the transcription got anything wrong.</p>
+        <p class="muted small">The clone is modelled on this short part of the sample, not on the whole sample. The words below are the words of this clip only. They must match the clip exactly. Correct them if the transcription got anything wrong.</p>
         <audio id="a-reference" controls preload="none"></audio>
         <textarea id="v-ref-text" rows="2" maxlength="1000" lang="kn"></textarea>
         <div class="actions"><span id="ref-saved" class="muted small" hidden>Saved</span><button id="v-ref-save" class="btn btn-line">Save words</button></div>
@@ -129,6 +123,7 @@
       <div class="card" id="v-try-card" hidden>
         <h3>Try the voice</h3>
         <textarea id="v-say" rows="3" maxlength="400" lang="kn" placeholder="Type what the voice should say"></textarea>
+        <p class="muted small" id="v-say-count"></p>
         <details class="opts">
           <summary>Generation options</summary>
           <div class="opt-group" id="o-generate"></div>

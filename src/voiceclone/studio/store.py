@@ -14,6 +14,10 @@ from pathlib import Path
 _ID = re.compile(r"^[0-9a-f]{12}$")
 
 
+class VoiceDeleted(KeyError):
+    """The voice does not exist (any more)."""
+
+
 class VoiceStore:
     def __init__(self, root):
         self.root = Path(root) / "voices"
@@ -22,10 +26,10 @@ class VoiceStore:
 
     def dir(self, vid: str) -> Path:
         if not _ID.match(vid or ""):
-            raise KeyError(vid)
+            raise VoiceDeleted(vid)
         d = self.root / vid
         if not (d / "voice.json").exists():
-            raise KeyError(vid)
+            raise VoiceDeleted(vid)
         return d
 
     def create(self, name: str, lang: str) -> dict:

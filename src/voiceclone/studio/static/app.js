@@ -173,7 +173,6 @@ async function submitCreate(e) {
   const fd = new FormData();
   fd.append("name", name);
   fd.append("lang", $("f-lang").value);
-  fd.append("ref_text", $("f-text").value);
   fd.append("options", JSON.stringify({ clean: readOptions("o-create-clean"), reference: readOptions("o-create-reference") }));
   fd.append("file", chosen, chosen.name || "sample.webm");
   const btn = $("create-submit");
@@ -285,6 +284,10 @@ async function generate(id, text, options) {
 }
 
 function setupVoice() {
+  $("v-say").addEventListener("input", () => {
+    const n = $("v-say").value.trim().split(/(?<=[.?!।॥])\s+/).filter(Boolean).length;
+    $("v-say-count").textContent = n ? `${n} sentence${n > 1 ? "s" : ""}. The studio generates each sentence as one take and joins them.` : "";
+  });
   $("v-generate").addEventListener("click", () => {
     const text = $("v-say").value.trim();
     if (text) generate(current, text, readOptions("o-generate"));

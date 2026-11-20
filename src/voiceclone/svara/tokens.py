@@ -79,11 +79,12 @@ def token_budget(n_syllables: int, max_sec: float, min_sps: float, max_sps: floa
     cannot ramble; the floor is syllables/max_sps s so it cannot stop after
     a syllable. Both are whole frames of 7 tokens (+8 slack on the cap).
     With no syllables (text in a script `translit` cannot read) the length
-    cannot be estimated, so only the max_sec cap applies.
+    cannot be estimated, so only the max_sec cap applies. The floor never
+    exceeds the cap, even when the text needs more speech than max_sec.
     """
     if n_syllables <= 0:
         return 0, int(max_sec * FRAMES_PER_SEC * TOKENS_PER_FRAME) + 8
     cap = min(max_sec, n_syllables / min_sps + 1.5)
     max_new = int(cap * FRAMES_PER_SEC * TOKENS_PER_FRAME) + 8
     min_new = int(n_syllables / max_sps * FRAMES_PER_SEC) * TOKENS_PER_FRAME
-    return min_new, max_new
+    return min(min_new, max_new), max_new

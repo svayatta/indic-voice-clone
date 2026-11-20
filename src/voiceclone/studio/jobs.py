@@ -8,12 +8,16 @@ import traceback
 import uuid
 from pathlib import Path
 
+import numpy as np
+
 from voiceclone.audio import TTS_SR, write_wav
 from voiceclone.studio.clean import SAMPLE_MAX_SEC, SAMPLE_MIN_SEC, duration, pick_reference
 from voiceclone.studio.options import defaults
-from voiceclone.studio.store import VoiceStore
+from voiceclone.studio.store import VoiceDeleted, VoiceStore
+from voiceclone.text import split_sentences
 
 LOG_LINES = 40
+SENTENCE_GAP_SEC = 0.25   # the same pause as longform.py
 
 
 class Studio:
@@ -26,13 +30,11 @@ class Studio:
             threading.Thread(target=self._run, daemon=True).start()
 
     # ---------- requests (return at once; the work is queued) ----------
-    def add_sample(self, vid: str, original: Path, ref_text: str | None = None, options: dict | None = None) -> None:
+    def add_sample(self, vid: str, original: Path, options: dict | None = None) -> None:
         """`options`: validated {"clean": ..., "reference": ...} (options.py); defaults when left out."""
         def mark(v):
             v["status"], v["error"], v["original"] = "queued", None, original.name
             v["options"] = options or {"clean": defaults("clean"), "reference": defaults("reference")}
-            if ref_text:
-                v["ref_text"], v["ref_text_by"] = ref_text, "user"
         self.store.update(vid, mark)
         self.q.put((self._clean, vid))
 
@@ -91,7 +93,7 @@ class Studio:
     def run_job(self, fn, *args):
         try:
             fn(*args)
-        except KeyError:
+        except VoiceDeleted:
             pass   # the voice was deleted while queued
         except Exception as e:   # noqa: BLE001 - every failure is shown to the user in voice.json
             traceback.print_exc()
@@ -130,10 +132,9 @@ class Studio:
             raise ValueError(f"the sample is {sec:.0f} s long; use {SAMPLE_MIN_SEC:.0f} to {SAMPLE_MAX_SEC:.0f} s "
                              "(longer recordings go under training)")
         pick_reference(clean, d / "reference.wav", d / "work" / "ref", opts["reference"]["mode"])
-        if v.get("ref_text_by") != "user":
-            self._set(vid, status="transcribing")
-            text = self.engine.transcribe(d / "reference.wav", v["lang"])
-            self._set(vid, ref_text=text, ref_text_by="asr")
+        self._set(vid, status="transcribing")   # the words of the reference clip, not of the whole sample
+        text = self.engine.transcribe(d / "reference.wav", v["lang"])
+        self._set(vid, ref_text=text, ref_text_by="asr")
         self._set(vid, status="ready")
 
     def _preview(self, vid, pid):
@@ -143,7 +144,12 @@ class Studio:
         self._set_preview(vid, pid, status="running")
         lora = v["train"]["adapter"] if p["trained"] else None
         t0 = time.time()
-        wav, _ = self.engine.synthesize(p["text"], d / "reference.wav", v["ref_text"], lora, p["seed"], p.get("params"))
+        gap = np.zeros(int(SENTENCE_GAP_SEC * TTS_SR), np.float32)
+        parts = []
+        for sentence in split_sentences(p["text"]) or [p["text"]]:   # ponytail: one sentence longer than max_sec is still cut
+            wav, _ = self.engine.synthesize(sentence, d / "reference.wav", v["ref_text"], lora, p["seed"], p.get("params"))
+            parts += [gap, wav]
+        wav = np.concatenate(parts[1:])
         (d / "previews").mkdir(exist_ok=True)
         write_wav(d / "previews" / f"{pid}.wav", wav, TTS_SR)
         self._set_preview(vid, pid, status="done", seconds=round(len(wav) / TTS_SR, 1), gen_time=round(time.time() - t0, 1))

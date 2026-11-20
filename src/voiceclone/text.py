@@ -27,8 +27,12 @@ STAR = "<star>"
 KANNADA_BLOCK = 0x0C80
 BRAHMIC_BLOCKS = (0x0900, 0x0980, 0x0A00, 0x0A80, 0x0B00, 0x0B80, 0x0C00, 0x0D00)
 NUKTA_OFFSET = 0x3C
-# Devanagari candra vowels have no Kannada counterpart at the same offset
-CANDRA = {"\u090D": "ಎ", "\u0911": "ಒ", "\u0945": "ೆ", "\u0949": "ೊ"}
+# Letters with no Kannada letter at the same offset: Devanagari candra vowels, Tamil and
+# Malayalam ன and ழ, Malayalam chillu letters (consonant + virama), Bengali khanda ta
+EXCEPTIONS = {"\u090D": "ಎ", "\u0911": "ಒ", "\u0945": "ೆ", "\u0949": "ೊ",
+              "\u0BA9": "ನ", "\u0D29": "ನ", "\u0BB4": "ೞ", "\u0D34": "ೞ",
+              "\u0D7A": "ಣ್", "\u0D7B": "ನ್", "\u0D7C": "ರ್", "\u0D7D": "ಲ್", "\u0D7E": "ಳ್", "\u0D7F": "ಕ್",
+              "\u09CE": "ತ್"}
 
 
 def _decompose_nukta(ch: str) -> str:
@@ -49,8 +53,8 @@ def to_kannada_script(text: str) -> str:
     """Re-encode any parallel-block Brahmic script as Kannada; other characters unchanged."""
     out = []
     for ch in "".join(_decompose_nukta(c) for c in text):
-        if ch in CANDRA:
-            out.append(CANDRA[ch]); continue
+        if ch in EXCEPTIONS:
+            out.append(EXCEPTIONS[ch]); continue
         c = ord(ch)
         for base in BRAHMIC_BLOCKS:
             if base <= c < base + 0x80:
@@ -138,3 +142,8 @@ def star_tokens(text: str) -> tuple[list[str], list[str]]:
     if not toks:
         return [], []
     return toks + [STAR], txt + [STAR]
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split at . ? ! । ॥ followed by white space. A number such as "3.5" stays whole."""
+    return [s for s in re.split(r"(?<=[.?!।॥])\s+", text.strip()) if s]

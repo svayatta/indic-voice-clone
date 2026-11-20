@@ -5,6 +5,7 @@ together), so the engine frees the synthesizer before training and the
 other way round.
 """
 import gc
+import shutil
 from pathlib import Path
 
 from voiceclone.studio.options import ENHANCE
@@ -100,6 +101,8 @@ class Engine:
         rec_clean = {**(clean_opts or defaults("clean")), "enhance": opts["enhance"]}
         self.release()
         work = Path(work)
+        for stale in ("chunks", "clean", "clips"):   # old transcripts and SNAC tokens must not meet new audio
+            shutil.rmtree(work / stale, ignore_errors=True)
         chunk_dirs = []
         for i, rec in enumerate(recordings):
             tag = f"R{i:02d}"

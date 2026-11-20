@@ -95,7 +95,7 @@ def create_app(studio: Studio) -> FastAPI:
         return store.list()
 
     @app.post("/api/voices", status_code=201)
-    async def create_voice(name: str = Form(...), lang: str = Form("kn"), ref_text: str = Form(""),
+    async def create_voice(name: str = Form(...), lang: str = Form("kn"),
                            options: str = Form("{}"), file: UploadFile = File(...)):
         name = name.strip()
         if not name or len(name) > 80:
@@ -115,7 +115,7 @@ def create_app(studio: Studio) -> FastAPI:
         except HTTPException:
             store.delete(v["id"])
             raise
-        studio.add_sample(v["id"], Path(fname), ref_text.strip() or None, chosen)
+        studio.add_sample(v["id"], Path(fname), chosen)
         return store.get(v["id"])
 
     @app.get("/api/voices/{vid}")

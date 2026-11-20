@@ -101,12 +101,13 @@ def test_sample_is_cleaned_then_transcribed_then_ready(env):
         assert client.get(f"/api/voices/{vid}/audio/{kind}").status_code == 200
 
 
-def test_user_transcript_is_used_instead_of_asr(env):
+def test_transcript_sent_at_creation_does_not_replace_the_asr_of_the_reference_clip(env):
     client, _, engine, drain = env
-    vid = create(client, ref_text="ಇವತ್ತು ಸಂಜೆ").json()["id"]
+    vid = create(client, ref_text="ಇವತ್ತು ಸಂಜೆ").json()["id"]   # an old client may still send it
     drain()
-    assert client.get(f"/api/voices/{vid}").json()["ref_text"] == "ಇವತ್ತು ಸಂಜೆ"
-    assert engine.transcribed == []
+    v = client.get(f"/api/voices/{vid}").json()
+    assert v["ref_text"] == "ನಮಸ್ಕಾರ ರೀ" and v["ref_text_by"] == "asr"
+    assert len(engine.transcribed) == 1
 
 
 @pytest.mark.parametrize("sec", [2, 60])
@@ -159,6 +160,29 @@ def test_corrected_reference_words_are_used(env):
     client.post(f"/api/voices/{vid}/previews", json={"text": "ನಮಸ್ಕಾರ"})
     drain()
     assert engine.synth_calls[-1]["ref_text"] == "ನಮಸ್ಕಾರ ರೀ ಎಲ್ಲಾರೂ"
+
+
+def test_preview_of_several_sentences_is_one_take_per_sentence_joined_by_pauses(env):
+    client, _, engine, drain = env
+    vid = create(client).json()["id"]
+    drain()
+    pid = client.post(f"/api/voices/{vid}/previews", json={"text": "ಒಂದು. ಎರಡು? Pi is 3.5! ಮೂರು।"}).json()[0]["id"]
+    drain()
+    calls = engine.synth_calls
+    assert [c["text"] for c in calls] == ["ಒಂದು.", "ಎರಡು?", "Pi is 3.5!", "ಮೂರು।"]
+    assert len({c["seed"] for c in calls}) == 1   # the take keeps its seed
+    wav, _ = sf.read(io.BytesIO(client.get(f"/api/voices/{vid}/audio/preview", params={"id": pid}).content))
+    assert len(wav) == 4 * SR + 3 * int(0.25 * SR)
+
+
+def test_preview_of_one_sentence_has_no_pause(env):
+    client, _, engine, drain = env
+    vid = create(client).json()["id"]
+    drain()
+    client.post(f"/api/voices/{vid}/previews", json={"text": "ನಮಸ್ಕಾರ ರೀ ಎಲ್ಲಾರೂ"})
+    drain()
+    assert [c["text"] for c in engine.synth_calls] == ["ನಮಸ್ಕಾರ ರೀ ಎಲ್ಲಾರೂ"]
+    assert client.get(f"/api/voices/{vid}").json()["previews"][0]["seconds"] == 1.0
 
 
 def test_training_needs_recordings_then_previews_use_the_adapter(env):
@@ -304,13 +328,14 @@ def test_training_options_and_the_voices_cleaning_reach_training(env):
 
 def test_reclean_uses_new_options_and_retranscribes(env):
     client, _, engine, drain = env
-    vid = create(client, ref_text="ಇವತ್ತು ಸಂಜೆ").json()["id"]
+    vid = create(client).json()["id"]
     drain()
-    assert engine.transcribed == []
+    client.patch(f"/api/voices/{vid}", json={"ref_text": "ಇವತ್ತು ಸಂಜೆ"})
+    assert len(engine.transcribed) == 1
     r = client.post(f"/api/voices/{vid}/clean", json={"clean": {"declip": False}, "reference": {"mode": "whole"}})
     assert r.status_code == 202
     assert client.post(f"/api/voices/{vid}/clean", json={}).status_code == 409    # already queued
     drain()
     v = client.get(f"/api/voices/{vid}").json()
     assert engine.cleaned[-1][1]["declip"] is False and v["options"]["reference"]["mode"] == "whole"
-    assert len(engine.transcribed) == 1 and v["ref_text_by"] == "asr"   # the reference may have changed
+    assert len(engine.transcribed) == 2 and v["ref_text_by"] == "asr"   # the reference may have changed
