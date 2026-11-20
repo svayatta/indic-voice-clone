@@ -339,3 +339,18 @@ def test_reclean_uses_new_options_and_retranscribes(env):
     v = client.get(f"/api/voices/{vid}").json()
     assert engine.cleaned[-1][1]["declip"] is False and v["options"]["reference"]["mode"] == "whole"
     assert len(engine.transcribed) == 2 and v["ref_text_by"] == "asr"   # the reference may have changed
+
+
+@pytest.mark.parametrize("text, sentences", [
+    ("ಒಂದು।ಎರಡು।ಮೂರು", ["ಒಂದು।", "ಎರಡು।", "ಮೂರು"]),       # a danda with no space after it still ends a sentence
+    ("ಒಂದು.ಎರಡು", ["ಒಂದು.", "ಎರಡು"]),
+    ("೩.೫ and 3.5", ["೩.೫ and 3.5"]),                      # a number stays whole, in each script
+    ('ನಿಲ್ಲು... "ಯಾಕೆ?" ಅಂದ.', ["ನಿಲ್ಲು...", '"ಯಾಕೆ?" ಅಂದ.']),   # a row of marks and a closing quote do not split
+])
+def test_preview_text_splits_at_sentence_ends_with_or_without_a_space(env, text, sentences):
+    client, _, engine, drain = env
+    vid = create(client).json()["id"]
+    drain()
+    client.post(f"/api/voices/{vid}/previews", json={"text": text})
+    drain()
+    assert [c["text"] for c in engine.synth_calls] == sentences

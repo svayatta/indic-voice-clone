@@ -145,5 +145,9 @@ def star_tokens(text: str) -> tuple[list[str], list[str]]:
 
 
 def split_sentences(text: str) -> list[str]:
-    """Split at . ? ! । ॥ followed by white space. A number such as "3.5" stays whole."""
-    return [s for s in re.split(r"(?<=[.?!।॥])\s+", text.strip()) if s]
+    """Split after . ? ! । ॥ where white space or a new word follows.
+
+    "ಒಂದು।ಎರಡು" (no space) gives two sentences. A number such as "3.5", a row
+    of marks ("...") and a closing quote or bracket after the mark stay whole.
+    """
+    return [s for s in re.split(r"(?<=[.?!।॥])(?:\s+|(?=[^\s\d.?!।॥\"'”’)\]]))", text.strip()) if s]

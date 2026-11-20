@@ -72,11 +72,10 @@ def test_token_budget_caps_rambling_and_prevents_early_stop():
     assert mx_long == int(20.0 * 12 * 7) + 8            # never beyond max_sec
 
 
-def test_token_budget_floor_never_exceeds_cap():
-    # regression: 150 syllables need 25 s, the cap is 20 s -> floor was above the cap
-    mn, mx = token_budget(n_syllables=150, max_sec=20.0, min_sps=2.0, max_sps=6.0)
-    assert mn <= mx
-    assert mx == int(20.0 * 12 * 7) + 8
+def test_token_budget_has_no_floor_when_the_text_cannot_fit_under_the_cap():
+    # 150 syllables need 25 s at the fastest rate and the cap is 20 s. A floor above the cap
+    # is not valid, and a floor at the cap keeps EOS off, so the model can never stop.
+    assert token_budget(n_syllables=150, max_sec=20.0, min_sps=2.0, max_sps=6.0) == (0, int(20.0 * 12 * 7) + 8)
 
 
 @pytest.mark.parametrize("n", [0, 1])

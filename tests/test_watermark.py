@@ -86,3 +86,29 @@ def test_every_generated_take_is_marked(wm, monkeypatch):
     monkeypatch.setattr("voiceclone.svara.synth.build_prompt", lambda *a, **k: [1, 2, 3])
     wav, _ = s.generate("ನಮಸ್ಕಾರ", None, None)
     assert wm.detect(wav, SR).ours
+
+
+@pytest.mark.parametrize("sentence_sec", [3.0, 0.5])
+def test_studio_preview_of_several_sentences_is_marked(wm, tmp_path, sentence_sec):
+    """The file the user plays is the join of the takes with unmarked pauses
+    between them. The detector reports the share of the file that is marked,
+    so the join must stay ours, also for very short sentences."""
+    import soundfile as sf
+
+    from voiceclone.studio.jobs import Studio
+
+    class Engine:
+        def synthesize(self, text, ref_wav, ref_text, lora=None, seed=0, params=None):
+            return wm.embed(voice_like(sentence_sec, seed=len(text)), SR), 0   # as Synthesizer.generate returns it
+
+    studio = Studio(tmp_path, Engine(), start=False)
+    vid = studio.store.create("v", "kn")["id"]
+    studio.store.update(vid, lambda v: v.update(status="ready", ref_text="x"))
+    pid = studio.preview(vid, "ಒಂದು. ಎರಡು? ಮೂರು! ನಾಲ್ಕು।")[0]["id"]
+    while not studio.q.empty():
+        fn, *args = studio.q.get()
+        fn(*args)
+    wav, sr = sf.read(studio.store.dir(vid) / "previews" / f"{pid}.wav", dtype="float32")
+    assert len(wav) > 4 * sentence_sec * SR   # four takes and the pauses
+    d = wm.detect(wav, sr)
+    assert d.ours, d

@@ -285,7 +285,7 @@ async function generate(id, text, options) {
 
 function setupVoice() {
   $("v-say").addEventListener("input", () => {
-    const n = $("v-say").value.trim().split(/(?<=[.?!।॥])\s+/).filter(Boolean).length;
+    const n = $("v-say").value.trim().split(/(?<=[.?!।॥])(?:\s+|(?=[^\s\p{Nd}.?!।॥"'”’)\]]))/u).filter(Boolean).length;
     $("v-say-count").textContent = n ? `${n} sentence${n > 1 ? "s" : ""}. The studio generates each sentence as one take and joins them.` : "";
   });
   $("v-generate").addEventListener("click", () => {
