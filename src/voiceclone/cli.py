@@ -246,20 +246,71 @@ def cmd_compare(a):
 
     ra, rb = load_run(a.run_a), load_run(a.run_b)
     metrics = compare_runs(ra, rb, a.n_boot)
-    listening = None
+    listening = ratings = None
     if a.answers:
         if not a.key:
             sys.exit("--answers needs --key (the .key.json written next to the listening page)")
-        listening = listening_results(json.load(open(a.key, encoding="utf-8")),
-                                      [json.load(open(f, encoding="utf-8")) for f in a.answers], a.run_a, a.run_b)
+        key = json.load(open(a.key, encoding="utf-8"))
+        if key.get("mode") == "rate":
+            from voiceclone.rating import format_ratings, rating_results
+
+            ratings = rating_results(key, [_answers_file(f) for f in a.answers], a.run_a, a.run_b, a.n_boot)
+        else:
+            listening = listening_results(key, [json.load(open(f, encoding="utf-8")) for f in a.answers],
+                                          a.run_a, a.run_b)
     _log(format_report(ra, rb, metrics, listening))
+    if ratings:
+        _log(format_ratings(ratings))
     if a.report:
-        write_json(a.report, {"a": a.run_a, "b": a.run_b, "metrics": metrics, "listening": listening})
+        write_json(a.report, {"a": a.run_a, "b": a.run_b, "metrics": metrics, "listening": listening,
+                              "ratings": ratings})
+
+
+def _answers_file(path):
+    """A downloaded answers JSON, or a text file holding one answer code."""
+    import json
+
+    from voiceclone.rating import CODE_PREFIX, decode_answers
+
+    text = Path(path).read_text(encoding="utf-8").strip()
+    code = text.split()[-1] if text else ""
+    return decode_answers(code, Path(path).stem) if code.startswith(CODE_PREFIX) else json.loads(text)
+
+
+def cmd_listening_status(a):
+    """Score `/listening CODE` comments for the `listening-test` status (see .github/workflows/listening-test.yml)."""
+    import json
+
+    from voiceclone.jsonl import read_jsonl, write_json
+    from voiceclone.rating import decode_answers, format_ratings, listening_status, rating_results
+
+    key = json.load(open(a.key, encoding="utf-8"))
+    allowed = {x.strip().lower() for x in a.listeners.split(",") if x.strip()}
+    files, ignored = [], []
+    for c in read_jsonl(a.comments):   # oldest first, so a listener's last code wins
+        login, words = c["login"], c["body"].split()
+        if login.lower() not in allowed or len(words) < 2 or words[0] != "/listening":
+            continue
+        try:
+            files.append(decode_answers(words[1], login))
+        except ValueError as e:
+            ignored.append(f"{login}: {e}")
+    res = rating_results(key, files, n_boot=a.n_boot)
+    status = listening_status(res, a.dimension, a.min_listeners)
+    report = (f"### Listening test: {status['state']}\n\n{status['description']}\n\n```\n{format_ratings(res)}\n```\n"
+              + "".join(f"\nIgnored a comment from {x}" for x in ignored))
+    write_json(a.out, {**status, "report": report, "ratings": res})
+    _log(report)
 
 
 def cmd_listen_page(a):
     from voiceclone.listen import write_listening_page
 
+    if a.rate:
+        from voiceclone.rating import write_rating_page
+
+        write_rating_page(a.run_a, a.run_b, a.out, a.max_sentences, a.check_every, a.seed, log=_log)
+        return
     write_listening_page(a.run_a, a.run_b, a.out, a.check_every, a.seed, log=_log)
 
 
@@ -531,6 +582,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, help="HTML file; its .key.json is written next to it")
     p.add_argument("--check-every", type=int, default=6, help="one hidden real-clip check per N trials (0 = none)")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--rate", action="store_true",
+                   help="rating mode: rate each take 1-5 against a real recording, with hidden real-vs-real anchors")
+    p.add_argument("--max-sentences", type=int, default=8, help="rating mode: sentences per run (one take each)")
+
+    p = add("listening-status", cmd_listening_status, "Score /listening answer codes for a pull request's status")
+    p.add_argument("--key", required=True, help="the rating page's .key.json")
+    p.add_argument("--comments", required=True, help="JSONL of {login, body}, oldest first")
+    p.add_argument("--listeners", required=True, help="comma-separated GitHub logins whose codes count")
+    p.add_argument("--dimension", default="accent", choices=["voice", "accent", "natural", "pacing"])
+    p.add_argument("--min-listeners", type=int, default=3)
+    p.add_argument("--n-boot", type=int, default=10000)
+    p.add_argument("--out", required=True, help="status JSON: state, description, report")
 
     # quality gate
     p = add("run-recipe", cmd_run_recipe, "Run a recipe (ci/recipe.json) end to end and benchmark its adapter")
