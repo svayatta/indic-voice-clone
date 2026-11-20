@@ -2,9 +2,13 @@
 # The quality gate, run by .github/workflows/quality-gate.yml on the self-hosted runner.
 #   ci/gate.sh baseline BASE_DIR           score a checkout of main (cached)
 #   ci/gate.sh compare BASE_DIR HEAD_DIR   score both (cached), gate HEAD against BASE
+#   ci/gate.sh listening BASE_DIR PR SHA COMMENTS   score /listening codes (listening-test.yml)
 # Environment: VOICECLONE_DATA  the shared, read-only data folder (holds bench.json)
 #              VOICECLONE_STATE the gate's own folder: runs, venvs, model caches
 #              REQUIRE_IMPROVEMENT=1 for experiments
+#              PR, SHA, ACCENT=1   for a pull request labelled `accent`: also write a rating page to
+#                                  $VOICECLONE_STATE/listening/pr-PR/SHA/ for the owner to share
+#              LISTENERS           comma-separated GitHub logins whose codes count (listening)
 # Writes gate-report.md in the current folder; exit status 1 = the gate failed.
 set -euo pipefail
 : "${VOICECLONE_DATA:?set VOICECLONE_DATA to the shared data folder}"
@@ -78,7 +82,30 @@ case "${1:-}" in
     fi
     gate="$VENV/bin/voiceclone"
     flag=""; [[ "${REQUIRE_IMPROVEMENT:-0}" == 1 ]] && flag="--require-improvement"
-    "$gate" gate "$base_run/bench" "$head_run/bench" --report "$REPORT" $flag ;;
+    rc=0
+    "$gate" gate "$base_run/bench" "$head_run/bench" --report "$REPORT" $flag || rc=$?
+    if [[ "${ACCENT:-0}" == 1 ]]; then
+      # the rating page embeds benchmark audio, so it stays on this machine; the owner shares it
+      dir="$VOICECLONE_STATE/listening/pr-$PR/$SHA"
+      rater="$gate"
+      "$rater" listen-page --help | grep -q -- --rate || { venv_for "$head" "$head_key"; rater="$VENV/bin/voiceclone"; }
+      mkdir -p "$dir"
+      "$rater" listen-page "$base_run/bench" "$head_run/bench" --rate --out "$dir/listen.html" >&2
+      # shellcheck disable=SC2016  # the backticks are Markdown
+      printf '\n### Listening test\n\nA rating page for main against this pull request is on the gate runner, in `listening/pr-%s/%s/listen.html`. The owner shares it privately with the listeners, who post `/listening CODE` here.\n' \
+        "$PR" "$SHA" >> "$REPORT"
+    fi
+    exit $rc ;;
+  listening)
+    base=$(abspath "$2"); pr=$3; sha=$4; comments=$5
+    key="$VOICECLONE_STATE/listening/pr-$pr/$sha/listen.key.json"
+    if [[ ! -f "$key" ]]; then
+      printf '{"state": "pending", "description": "no rating page for this commit yet: the gate builds it (benchmark label)", "report": ""}\n' > status.json
+      exit 0
+    fi
+    venv_for "$base" "$(run_key "$base")"
+    "$VENV/bin/voiceclone" listening-status --key "$key" --comments "$comments" \
+      --listeners "${LISTENERS:?set LISTENERS}" --out status.json ;;
   *)
-    echo "usage: ci/gate.sh baseline BASE_DIR | compare BASE_DIR HEAD_DIR" >&2; exit 2 ;;
+    echo "usage: ci/gate.sh baseline BASE_DIR | compare BASE_DIR HEAD_DIR | listening BASE_DIR PR SHA COMMENTS" >&2; exit 2 ;;
 esac

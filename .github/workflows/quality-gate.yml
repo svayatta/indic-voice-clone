@@ -52,6 +52,9 @@ jobs:
         if: github.event_name == 'pull_request_target'
         env:
           REQUIRE_IMPROVEMENT: ${{ contains(github.event.pull_request.labels.*.name, 'experiment') && '1' || '0' }}
+          ACCENT: ${{ contains(github.event.pull_request.labels.*.name, 'accent') && '1' || '0' }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
         run: base/ci/gate.sh compare base head
       - name: Keep the report
         if: always() && github.event_name == 'pull_request_target'

@@ -51,9 +51,26 @@ benchmark's leak check stops the run if they do.
 5. In the repository's Settings -> Secrets and variables -> Actions ->
    Variables, set `GATE_APPROVER` to the GitHub login allowed to start gate
    runs. Until it is set, the label does nothing.
-6. Create the labels `benchmark` and `experiment`.
-7. Optionally score main ahead of time: Actions -> quality-gate -> Run workflow.
+6. Create the labels `benchmark`, `experiment` and `accent`.
+7. For accent claims, set the repository variable `LISTENERS` to the GitHub
+   logins of the native listeners, comma-separated with no spaces. Only their
+   `/listening` codes count. Optionally add `listening-test` to the required
+   checks on `main`: pull requests without the `accent` label pass it at once.
+8. Optionally score main ahead of time: Actions -> quality-gate -> Run workflow.
    Otherwise the first gated pull request scores it (and caches it).
+
+## Listening tests
+
+For a pull request labelled `accent`, `ci/gate.sh compare` also writes a
+rating page for main against the pull request to
+`$VOICECLONE_STATE/listening/pr-<number>/<commit>/listen.html`, with its key
+next to it. The page embeds benchmark audio, so it never leaves the runner
+through GitHub: send it to the listeners yourself. Each listener posts
+`/listening CODE` on the pull request. `listening-test.yml` collects the codes
+from listeners named in `LISTENERS`, scores them here with
+`ci/gate.sh listening` (main's code, against the key), and posts the status
+and ratings. A new commit needs a new gate run and a new page; codes for an
+older page don't count.
 
 ## Disk
 

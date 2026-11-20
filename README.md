@@ -522,6 +522,23 @@ This adds B's win rate per question with a 95% interval, and how often each
 listener picked the real recording in the checks. A listener who cannot pick
 out the real recording is guessing, so weigh their answers accordingly.
 
+To find out *how* close each run is, not only which is preferred, add `--rate`:
+
+```bash
+voiceclone listen-page outputs/bench/lora outputs/bench/v2_150 --rate --out outputs/bench/rate.html
+```
+
+Each item plays a real recording of the speaker, then one take, and the
+listener rates the take 1 to 5 on voice, accent, naturalness and pacing, with
+an optional note on what sounds wrong. Takes from both runs are mixed in random
+order. Some items are hidden anchors: a real recording rated against another.
+They show what "sounds like the speaker" scores when it is the speaker, and a
+listener who rates those below 4 on voice is left out. The listener downloads
+a file, which includes their notes, or copies an answer code, which holds the
+ratings only. `compare --key outputs/bench/rate.key.json --answers ...` takes
+either and reports each run's mean rating, the anchors' mean and B - A per
+dimension with a 95% interval.
+
 **6. See where a clone falls short.** `compare` says whether a run is better;
 `closeness` says in what way one clone differs from him, so you know what to
 fix next. It reports five dimensions, each banded close, noticeably different
@@ -575,6 +592,8 @@ for every option.
 | Benchmark a run | `benchmark --spec data/bench.json --lora models/lora --out outputs/bench/lora` | scores + `results.jsonl` row |
 | Compare two runs | `compare outputs/bench/A outputs/bench/B` | paired differences, 95% interval |
 | Blind listening | `listen-page outputs/bench/A outputs/bench/B --out listen.html` | A/B page + answer key |
+| Listener ratings | `listen-page outputs/bench/A outputs/bench/B --rate --out rate.html` | 1-5 rating page with hidden anchors + key |
+| Listening status | `listening-status --key rate.key.json --comments c.jsonl --listeners a,b --out status.json` | scores `/listening` codes for a pull request (CI) |
 | Run a recipe | `run-recipe --recipe ci/recipe.json --data DATA --work RUN --spec DATA/bench.json` | adapter + benchmark run |
 | Quality gate | `gate MAIN_RUN PR_RUN [--require-improvement]` | pass/fail + Markdown report |
 | Web app | `serve --root studio` | the voice studio on port 8000 |
@@ -668,6 +687,7 @@ src/voiceclone/
   benchmark.py    frozen benchmark spec, leakage guard, scoring, leaderboard
   compare.py      paired bootstrap comparison and listening win rates
   listen.py       blind A/B listening page
+  rating.py       listener rating page (1-5, hidden anchors), answer codes, listening status
   closeness.py    how close one clone is to the original, dimension by dimension
   postprocess.py  trim to text
   longform.py     same-words re-voicing

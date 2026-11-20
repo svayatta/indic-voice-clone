@@ -57,10 +57,12 @@ Audio is never contributed or licensed: see [NOTICE](NOTICE) and rule 5.
    not for "better".
 
 9. **Accent claims need ears.** The numbers measure voice similarity and
-   intelligibility, not accent. A pull request that claims a better accent
-   attaches a blind A/B result (`voiceclone listen-page`, then `compare --answers`).
-   It needs at least three native speakers of the dialect who passed the hidden
-   real-recording checks.
+   intelligibility, not accent. A pull request that claims a better accent gets
+   the `accent` label. The gate then builds a rating page (`listen-page --rate`)
+   for main against the pull request, and the owner shares it privately with
+   native speakers of the dialect. The `listening-test` check passes once at
+   least three of them, each rating the speaker's own voice at 4 or more in the
+   hidden anchors, rate the pull request's accent better with 95% confidence.
    `voiceclone closeness` helps you find what to change (it shows which of
    pitch, rhythm, timbre or energy is off), but it is not evidence of a better
    accent either.
@@ -75,6 +77,7 @@ Audio is never contributed or licensed: see [NOTICE](NOTICE) and rule 5.
 |---|---|---|---|
 | `ci` | every push and pull request | GitHub's machines | a test fails or a repository rule is broken |
 | `quality-gate` | when the owner adds the `benchmark` label | the self-hosted gate runner, with the real model | any metric is worse than main with 95% confidence; for pull requests also labelled `experiment`, when no metric is better |
+| `listening-test` | when a listener posts `/listening CODE`; passes at once without the `accent` label | the self-hosted gate runner scores, GitHub's machines post | for pull requests labelled `accent`: until three qualified listeners rate the accent better than main with 95% confidence |
 
 The metrics are voice similarity to the held-out recordings, character error
 rate, length error, and whether generation stopped by itself. Each is

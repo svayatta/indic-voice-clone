@@ -1,0 +1,125 @@
+name: listening-test
+# Accent claims need ears (CONTRIBUTING rule 9), so they get a status check:
+#   - a pull request without the `accent` label gets a passing `listening-test`
+#     status at once, so the check can be required without blocking anything else;
+#   - with the label, the status is pending. The gate (benchmark label) also writes
+#     a rating page for main against the pull request on the runner, and the owner
+#     shares it privately (it embeds benchmark audio, so it is never published);
+#   - listeners post `/listening CODE` from the page. Codes count only from the
+#     logins in the LISTENERS repository variable (comma-separated, no spaces).
+#     Each code is scored on the runner against the page's key, which never
+#     leaves it. The status passes once at least three listeners who recognise
+#     the speaker in the hidden real-vs-real anchors rate the pull request better
+#     on accent with 95% confidence.
+# Like quality-gate, the runner only runs the default branch's code here, the
+# comments are data, and posting happens in a separate job on GitHub's machines.
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, labeled, unlabeled]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: listening-test-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  label:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+      ACCENT: ${{ contains(github.event.pull_request.labels.*.name, 'accent') }}
+    steps:
+      - name: Set the status
+        run: |
+          if [ "$ACCENT" = true ]; then
+            state=pending; desc="waiting for 3 qualified listeners (the gate builds the rating page)"
+          else
+            state=success; desc="no accent claim (no accent label)"
+          fi
+          gh api "repos/${{ github.repository }}/statuses/$SHA" -f state=$state -f context=listening-test \
+            -f description="$desc"
+
+  collect:
+    if: >-
+      github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/listening ') && vars.LISTENERS != '' &&
+      contains(format(',{0},', vars.LISTENERS), format(',{0},', github.event.comment.user.login))
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      issues: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.issue.number }}
+    outputs:
+      sha: ${{ steps.pr.outputs.sha }}
+      accent: ${{ steps.pr.outputs.accent }}
+    steps:
+      - id: pr
+        name: Find the pull request's commit
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/$PR" \
+            --jq '"sha=\(.head.sha)\naccent=\([.labels[].name] | index("accent") != null)"' >> "$GITHUB_OUTPUT"
+      - name: Collect the codes, oldest first
+        run: |
+          gh api --paginate "repos/${{ github.repository }}/issues/$PR/comments" \
+            --jq '.[] | select(.body | startswith("/listening ")) | {login: .user.login, body}' -c > comments.jsonl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: listening-comments
+          path: comments.jsonl
+
+  score:
+    needs: collect
+    if: needs.collect.outputs.accent == 'true'
+    runs-on: [self-hosted, macOS, voiceclone-gate]
+    timeout-minutes: 60
+    steps:
+      - name: Check out the default branch
+        uses: actions/checkout@v7
+        with:
+          path: base
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: listening-comments
+      - name: Score the codes
+        env:
+          LISTENERS: ${{ vars.LISTENERS }}
+        run: base/ci/gate.sh listening base "${{ github.event.issue.number }}" "${{ needs.collect.outputs.sha }}" comments.jsonl
+      - uses: actions/upload-artifact@v7
+        with:
+          name: listening-status
+          path: status.json
+
+  report:
+    needs: [collect, score]
+    runs-on: ubuntu-latest
+    permissions:
+      statuses: write
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.issue.number }}
+      SHA: ${{ needs.collect.outputs.sha }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: listening-status
+      - name: Post the result
+        run: |
+          state=$(jq -r .state status.json)
+          gh api "repos/${{ github.repository }}/statuses/$SHA" -f state="$state" -f context=listening-test \
+            -f description="$(jq -r .description status.json | cut -c1-140)" \
+            -f target_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          jq -r .report status.json > report.md
+          if [ -s report.md ]; then gh pr comment "$PR" --repo "${{ github.repository }}" --body-file report.md; fi
