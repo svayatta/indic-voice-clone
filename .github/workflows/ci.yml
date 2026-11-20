@@ -29,9 +29,35 @@ jobs:
       - name: Tests
         run: .venv/bin/python -m pytest -q
 
+  changes:
+    # Is this a docs-only pull request (Markdown, docs/, LICENSE, NOTICE)? Then
+    # `watermark` is skipped; `test` still runs, since the repository rules check
+    # docs too. A skipped job counts as passing for branch protection.
+    name: changes (ci)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          echo "$files"
+          if echo "$files" | grep -qvE '(\.md$|^docs/|^LICENSE$|^NOTICE$)'; then code=true; else code=false; fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   watermark:
     # Every generated take must carry the watermark; this needs torch and the
     # AudioSeal models (CPU builds, downloaded on each run), which `test` avoids.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

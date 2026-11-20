@@ -3,9 +3,11 @@ name: docker
 # main changes (a merged pull request):
 #   :latest  CPU torch, linux/amd64 and linux/arm64
 #   :cuda    CUDA 12.6 torch, linux/amd64 (run with --gpus all on an NVIDIA host)
-# Every pull request, docs included, builds and smoke-tests both on amd64,
-# without pushing, so a broken image is caught before it reaches main. The
-# image copies README.md, LICENSE and NOTICE, so docs changes reach it too.
+# Every pull request that changes more than docs builds and smoke-tests both
+# on amd64, without pushing, so a broken image is caught before it reaches
+# main. Docs-only pull requests (Markdown, docs/, LICENSE, NOTICE) skip the
+# builds. Every merge to main still publishes, since the image copies
+# README.md, LICENSE and NOTICE.
 on:
   push:
     branches: [main]
@@ -21,7 +23,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # Docs-only pull requests skip `image` and `cuda`; a skipped job counts as
+    # passing for branch protection. Pushes to main always build and publish.
+    name: changes (docker)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --jq '.[].filename')
+          echo "$files"
+          if echo "$files" | grep -qvE '(\.md$|^docs/|^LICENSE$|^NOTICE$)'; then code=true; else code=false; fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   image:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -80,6 +107,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   cuda:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
