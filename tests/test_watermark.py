@@ -54,16 +54,26 @@ def test_mark_survives_a_cropped_quieter_excerpt(wm):
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="needs ffmpeg")
-def test_mark_survives_mp3(wm, tmp_path):
-    # clones get shared as MP3s; a mark that compression strips is no use
+@pytest.mark.parametrize("name,args", [
+    # clones get shared in these forms; a mark that one of them strips is no use
+    ("mp3", ["-b:a", "32k"]),
+    ("m4a", ["-c:a", "aac", "-b:a", "32k"]),
+    # a messaging-app voice note: mono 16 kHz Opus at 16 kbps, tuned for speech
+    ("ogg", ["-c:a", "libopus", "-b:a", "16k", "-ac", "1", "-ar", "16000", "-application", "voip"]),
+    # a phone call: narrowband 8 kHz audio
+    ("wav", ["-ar", "8000"]),
+], ids=["mp3-32k", "aac-32k", "voice-note-opus-16k", "phone-8khz"])
+def test_mark_survives_how_clips_get_shared(wm, tmp_path, name, args):
     import soundfile as sf
 
     from voiceclone.audio import load16
     from voiceclone.watermark import SR as WM_SR
 
     sf.write(tmp_path / "a.wav", wm.embed(voice_like(), SR), SR, subtype="PCM_16")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", tmp_path / "a.wav", "-b:a", "32k", tmp_path / "a.mp3"], check=True)
-    assert wm.detect(load16(tmp_path / "a.mp3"), WM_SR).ours
+    out = tmp_path / f"shared.{name}"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", tmp_path / "a.wav", *args, out], check=True)
+    d = wm.detect(load16(out), WM_SR)
+    assert d.ours, d
 
 
 def test_every_generated_take_is_marked(wm, monkeypatch):

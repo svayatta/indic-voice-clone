@@ -28,10 +28,16 @@ def load_wav(path, sr: int = TTS_SR) -> np.ndarray:
 
 
 def load16(path) -> np.ndarray:
-    """Any format librosa reads, mono at 16 kHz, float32."""
+    """Any audio file, mono at 16 kHz, float32. Formats librosa can't open
+    (AAC in .m4a, for example) are decoded with ffmpeg."""
     import librosa
 
-    return librosa.load(str(path), sr=ASR_SR, mono=True)[0].astype(np.float32)
+    try:
+        return librosa.load(str(path), sr=ASR_SR, mono=True)[0].astype(np.float32)
+    except Exception:
+        r = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-ac", "1", "-ar", str(ASR_SR),
+                            "-f", "f32le", "-"], capture_output=True, check=True)
+        return np.frombuffer(r.stdout, dtype=np.float32).copy()
 
 
 def peak_normalize(x: np.ndarray, dbfs: float = -3.0) -> np.ndarray:

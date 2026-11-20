@@ -407,17 +407,28 @@ suspect.mp3: made with pratidhvani (detector 1.00, 16/16 tag bits)
 another.wav: no watermark found (detector 0.00, 8/16 tag bits)
 ```
 
-On our tests it survives MP3, AAC and Opus compression, telephone-band (8 kHz)
-audio, cropping and volume changes, and it sits about 26 dB below the voice.
-Genuine recordings of the speaker scored 0.
+It sits about 26 dB below the voice, and genuine recordings of the speaker
+scored 0. Every build checks that it survives the ways clips get shared
+(`tests/test_watermark.py`):
+
+| Shared as | Detector score (found at 0.5) |
+| --- | --- |
+| MP3 or AAC at 32 kbps | 1.00 |
+| Telephone-band audio (8 kHz) | 1.00 |
+| A messaging-app voice note (Opus, 16 kbps) | about 0.7 |
+| A cropped, quieter excerpt | found |
+
+Scores are from a synthetic voice-like test signal, so real recordings will
+vary.
 
 What it can't do:
 
 - It marks what *this software* makes. Anyone can edit the code to remove the
   mark, or run a trained adapter with other software. It is a label that
   honest use keeps, not a lock.
-- Heavy added noise weakens it, so not finding it doesn't prove a recording
-  is genuine.
+- Heavy added noise weakens it, and very low bitrates strip it (Opus at
+  8 kbps scores about 0.02). Not finding it doesn't prove a recording is
+  genuine.
 - "Another source" means an AudioSeal mark with a different tag, from other
   software that uses AudioSeal.
 
