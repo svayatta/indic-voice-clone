@@ -19,6 +19,7 @@ file, never into a public comment). The code means nothing without the
 `listening-status` accept the downloaded files or the codes.
 """
 import base64
+import binascii
 import hashlib
 import json
 import random
@@ -34,16 +35,19 @@ from voiceclone.listen import _data_uri
 DIMENSIONS = ("voice", "accent", "natural", "pacing")
 DIMENSION_TEXT = {"voice": "voice", "accent": "accent", "natural": "naturalness", "pacing": "pacing"}
 ANCHOR_MIN = 4.0          # a listener whose mean voice rating of real-vs-real anchors is lower is left out
+ANCHOR_EVERY = 5          # one hidden anchor per this many rated takes
 MIN_LISTENERS = 3         # CONTRIBUTING rule 9: at least three qualified native listeners
 MAX_CODE_CHARS = 8000     # a code is a few hundred characters; anything far longer is not one
 CODE_PREFIX = "vc1."
 
 
 # ---------- the page ----------
-def build_rating_trials(a: dict, b: dict, max_sentences: int = 8, anchor_every: int = 5, seed: int = 0) -> list[dict]:
+def build_rating_trials(a: dict, b: dict, max_sentences: int = 8, anchor_every: int = ANCHOR_EVERY,
+                        seed: int = 0) -> list[dict]:
     """Rating items in listening order: {id, kind ("take" | "anchor"), run ("A" | "B" | "real"),
     text, seed, ref, path}. A take and its counterpart from the other run (same sentence and
-    seed) are both included, so their ratings can be compared pair by pair."""
+    seed) are both included, against the same reference recording, so their ratings can be
+    compared pair by pair without the choice of reference entering the difference."""
     if a["spec_hash"] != b["spec_hash"]:
         raise ValueError("runs used different benchmark specs")
     real = a["real"]
@@ -61,9 +65,10 @@ def build_rating_trials(a: dict, b: dict, max_sentences: int = 8, anchor_every: 
     pairs = rng.sample(list(by_text.values()), min(max_sentences, len(by_text)))
     items = []
     for ta, tb_ in pairs:
+        ref = rng.choice(real)["path"]
         for run, t in (("A", ta), ("B", tb_)):
             items.append({"kind": "take", "run": run, "text": t["text"], "seed": t["seed"],
-                          "ref": rng.choice(real)["path"], "path": t["path"]})
+                          "ref": ref, "path": t["path"]})
     for _ in range(max(1, len(items) // anchor_every) if anchor_every else 0):
         ref, test = rng.sample(real, 2)
         items.append({"kind": "anchor", "run": "real", "text": test["text"], "seed": None,
@@ -72,7 +77,7 @@ def build_rating_trials(a: dict, b: dict, max_sentences: int = 8, anchor_every: 
     return [{"id": f"r{i:02d}", **t} for i, t in enumerate(items)]
 
 
-def write_rating_page(run_a, run_b, out_html, max_sentences: int = 8, anchor_every: int = 5, seed: int = 0,
+def write_rating_page(run_a, run_b, out_html, max_sentences: int = 8, anchor_every: int = ANCHOR_EVERY, seed: int = 0,
                       log=print):
     """Writes out_html and its .key.json; returns both paths."""
     a, b = load_run(run_a), load_run(run_b)
@@ -102,7 +107,15 @@ def encode_answers(page_id: str, ratings: dict) -> str:
 
 
 def decode_answers(code: str, listener: str = "") -> dict:
-    """An answer code (as posted in a `/listening CODE` comment) -> the answers-file shape."""
+    """An answer code (as posted in a `/listening CODE` comment) -> the answers-file shape.
+    Anything malformed raises ValueError, so one bad comment can be skipped without stopping the rest."""
+    try:
+        return _decode(code, listener)
+    except (KeyError, TypeError, AttributeError, binascii.Error, zlib.error, json.JSONDecodeError) as e:
+        raise ValueError(f"not a readable answer code ({type(e).__name__})") from None
+
+
+def _decode(code: str, listener: str) -> dict:
     code = code.strip()
     if not code.startswith(CODE_PREFIX) or len(code) > MAX_CODE_CHARS:
         raise ValueError("not an answer code from a rating page")
@@ -144,11 +157,13 @@ def rating_results(key: dict, answer_files: list[dict], run_a=None, run_b=None, 
         if ans.get("page_id") != key["page_id"]:
             continue    # answers for an older page (an earlier commit) or another test
         latest[ans.get("listener") or f"anonymous {len(latest) + 1}"] = ans
+    n_anchors = sum(t["kind"] == "anchor" for t in key["items"].values())
     listeners, kept = [], []
     for who, ans in latest.items():
         rows = [(key["items"][r["item"]], r) for r in ans["answers"] if r.get("item") in key["items"]]
         anchor = [r["voice"] for t, r in rows if t["kind"] == "anchor" and r.get("voice")]
-        ok = bool(anchor) and float(np.mean(anchor)) >= ANCHOR_MIN
+        # every anchor must be rated: one easy anchor at 5 with the rest skipped proves nothing
+        ok = n_anchors > 0 and len(anchor) == n_anchors and float(np.mean(anchor)) >= ANCHOR_MIN
         listeners.append({"listener": who, "rated": len(rows), "anchor_voice": float(np.mean(anchor)) if anchor else None,
                           "qualified": ok})
         if ok:
@@ -165,11 +180,15 @@ def rating_results(key: dict, answer_files: list[dict], run_a=None, run_b=None, 
                 by_run[run].append(r[dim])
                 if t["kind"] == "take":
                     diffs.setdefault((n, t["text"], t["seed"]), {})[run] = r[dim]
-        paired = [[d["B"] - d["A"]] for d in diffs.values() if "A" in d and "B" in d]
+        # one bootstrap group per listener: five sentences from one person are one voter, not five
+        groups = {}
+        for (n, _, _), d in diffs.items():
+            if "A" in d and "B" in d:
+                groups.setdefault(n, []).append(d["B"] - d["A"])
         row = {f"mean_{k.lower()}": float(np.mean(v)) if v else None for k, v in by_run.items()}
-        row["pairs"] = len(paired)
-        if paired:
-            diff, lo, hi = bootstrap_ci(paired, n=n_boot)
+        row["pairs"] = sum(len(g) for g in groups.values())
+        if groups:
+            diff, lo, hi = bootstrap_ci(list(groups.values()), n=n_boot)
             row.update(diff=diff, ci=[lo, hi], verdict=verdict(lo, hi, higher_is_better=True))
         else:
             row.update(diff=None, ci=None, verdict="not rated")
@@ -187,7 +206,8 @@ def format_ratings(res: dict) -> str:
     for li in res["listeners"]:
         anchor = "no anchors rated" if li["anchor_voice"] is None else f"rated the real anchors {li['anchor_voice']:.1f}"
         lines.append(f"  listener {li['listener']}: {li['rated']} items, {anchor}"
-                     + ("" if li["qualified"] else f" (below {ANCHOR_MIN:g}: left out)"))
+                     + ("" if li["qualified"] else " (left out: every anchor must be rated, "
+                        f"averaging {ANCHOR_MIN:g} or more)"))
     return "\n".join(lines)
 
 

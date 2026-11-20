@@ -309,9 +309,12 @@ def cmd_listen_page(a):
     if a.rate:
         from voiceclone.rating import write_rating_page
 
-        write_rating_page(a.run_a, a.run_b, a.out, a.max_sentences, a.check_every, a.seed, log=_log)
+        from voiceclone.rating import ANCHOR_EVERY
+
+        every = ANCHOR_EVERY if a.check_every is None else a.check_every
+        write_rating_page(a.run_a, a.run_b, a.out, a.max_sentences, every, a.seed, log=_log)
         return
-    write_listening_page(a.run_a, a.run_b, a.out, a.check_every, a.seed, log=_log)
+    write_listening_page(a.run_a, a.run_b, a.out, 6 if a.check_every is None else a.check_every, a.seed, log=_log)
 
 
 def cmd_closeness(a):
@@ -580,7 +583,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = add("listen-page", cmd_listen_page, "Blind A/B listening page for two benchmark runs")
     p.add_argument("run_a"); p.add_argument("run_b")
     p.add_argument("--out", required=True, help="HTML file; its .key.json is written next to it")
-    p.add_argument("--check-every", type=int, default=6, help="one hidden real-clip check per N trials (0 = none)")
+    p.add_argument("--check-every", type=int, default=None,
+                   help="one hidden real-clip check per N trials (0 = none); default 6, or 5 with --rate")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--rate", action="store_true",
                    help="rating mode: rate each take 1-5 against a real recording, with hidden real-vs-real anchors")

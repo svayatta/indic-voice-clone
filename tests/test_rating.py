@@ -3,6 +3,7 @@ check what would let a wrong claim through: a page that gives away which
 run a take came from, a listener who can't recognise the speaker counting
 anyway, codes for an older page counting, someone outside the allowlist
 voting, and a status that turns green before three listeners agree."""
+import base64
 import json
 import re
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import numpy as np
 import pytest
 import soundfile as sf
+import zlib
 
 from voiceclone.cli import main
 from voiceclone.rating import (PAGE, decode_answers, encode_answers, listening_status, rating_results,
@@ -55,6 +57,11 @@ def test_the_page_hides_which_run_each_take_came_from(page, tmp_path):
     assert sorted(t["text"] for t in takes if t["run"] == "A") == sorted(t["text"] for t in takes if t["run"] == "B")
     assert len(takes) == 10 and len(anchors) == 2
     assert all(t["ref"] != t["path"] for t in anchors)               # real vs another real, never itself
+    # A and B of a sentence share one reference, so the reference never enters their difference
+    refs = {}
+    for t in takes:
+        refs.setdefault(t["text"], set()).add(t["ref"])
+    assert all(len(r) == 1 for r in refs.values())
     assert html.count("data:audio/wav;base64,") == 2 * len(key["items"])
 
 
@@ -68,6 +75,12 @@ def test_a_code_carries_ratings_only_and_rejects_anything_else():
         decode_answers(encode_answers("p1", {"r00": {"voice": 9}}), "x")
     with pytest.raises(ValueError):
         decode_answers("vc1." + "A" * 9000, "x")
+    # malformed codes are ValueErrors too, so one bad comment can be skipped and the rest scored
+    pack = lambda raw: "vc1." + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    for bad in ["vc1.!!!", pack(b"not zlib"), pack(zlib.compress(b'{"p": "p1"}')),
+                pack(zlib.compress(b'{"p": "p1", "r": [1]}')), pack(zlib.compress(b"[1, 2]"))]:
+        with pytest.raises(ValueError):
+            decode_answers(bad, "x")
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="needs node to run the page's script")
@@ -97,6 +110,24 @@ def test_ratings_count_only_listeners_who_recognise_the_speaker(page):
     assert rating_results(key, good, b, a, n_boot=500)["dimensions"]["accent"]["verdict"] == "A better"
 
 
+def test_a_listener_who_skips_anchors_does_not_qualify(page):
+    # one easy anchor rated 5 and the rest skipped proves nothing about the listener
+    a, b, _, key = page
+    full = listener(key, 2, 5, 5, "skips")
+    anchors = [i for i, t in key["items"].items() if t["kind"] == "anchor"]
+    full["answers"] = [r for r in full["answers"] if r["item"] not in anchors[1:]]
+    assert rating_results(key, [full], a, b, n_boot=200)["qualified"] == 0
+
+
+def test_one_listener_cannot_carry_the_vote(page):
+    # three listeners, but only the first hears B as better: their five sentences
+    # are one voter, and the accent claim must not pass on one person's ears
+    a, b, _, key = page
+    votes = [listener(key, 2, 5, 5, "l0"), listener(key, 4, 4, 5, "l1"), listener(key, 4, 4, 5, "l2")]
+    status = listening_status(rating_results(key, votes, a, b, n_boot=2000))
+    assert status["state"] == "failure", status
+
+
 def test_a_listeners_last_code_for_this_page_is_the_one_that_counts(page):
     a, b, _, key = page
     first, second = listener(key, 5, 1, 5, "l0"), listener(key, 1, 5, 5, "l0")
@@ -124,9 +155,18 @@ def test_only_allowlisted_listeners_codes_count(page, tmp_path):
                                               for k, v in key["items"].items()})
         comments.append({"login": who, "body": f"/listening {code}"})
     comments.append({"login": "ann", "body": "looks good"})
+    comments.insert(0, {"login": "bo", "body": "/listening vc1.!!!"})   # garbage must not stop the others
     (tmp_path / "c.jsonl").write_text("".join(json.dumps(c) + "\n" for c in comments))
     out = tmp_path / "status.json"
     main(["listening-status", "--key", str(key_path), "--comments", str(tmp_path / "c.jsonl"),
           "--listeners", "Ann, bo", "--n-boot", "200", "--out", str(out)])
     status = json.loads(out.read_text())
     assert status["state"] == "pending" and status["ratings"]["qualified"] == 2   # cy and mallory don't count
+    assert "Ignored a comment from bo" in status["report"]
+
+
+def test_the_rating_page_defaults_to_one_anchor_per_five_takes(page, tmp_path):
+    a, b, _, _ = page
+    main(["listen-page", str(a), str(b), "--rate", "--max-sentences", "5", "--out", str(tmp_path / "g.html")])
+    items = json.loads((tmp_path / "g.key.json").read_text())["items"].values()
+    assert sum(t["kind"] == "anchor" for t in items) == 10 // 5
