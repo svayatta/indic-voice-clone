@@ -64,6 +64,12 @@ class Engine:
             if params else GenParams()
         return synth.generate(text, synth.reference(ref_wav), ref_text, seed=seed, p=p)
 
+    def watermark(self, wav):
+        """Mark audio that the studio joins from takes of the loaded synthesizer."""
+        from voiceclone.audio import TTS_SR
+
+        return self._synth[1].watermark.embed(wav, TTS_SR)
+
     def release(self) -> None:
         self._synth = None
         gc.collect()

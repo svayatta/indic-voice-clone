@@ -44,6 +44,7 @@ class FakeEngine:
 
     def __init__(self):
         self.cleaned, self.transcribed, self.synth_calls, self.trained = [], [], [], []
+        self.marked = []   # lengths of the joins that got a mark
 
     def clean(self, src, dst, opts=None):
         self.cleaned.append((src, opts))
@@ -57,6 +58,10 @@ class FakeEngine:
     def synthesize(self, text, ref_wav, ref_text, lora=None, seed=0, params=None):
         self.synth_calls.append({"text": text, "ref_text": ref_text, "lora": lora, "seed": seed, "params": params})
         return np.zeros(SR, np.float32), 84
+
+    def watermark(self, wav):
+        self.marked.append(len(wav))
+        return wav
 
     def train(self, sample_wav, recordings, work, lang, log=print, clean_opts=None, opts=None):
         log("usable speech: 12.5 min ({})")
@@ -173,6 +178,7 @@ def test_preview_of_several_sentences_is_one_take_per_sentence_joined_by_pauses(
     assert len({c["seed"] for c in calls}) == 1   # the take keeps its seed
     wav, _ = sf.read(io.BytesIO(client.get(f"/api/voices/{vid}/audio/preview", params={"id": pid}).content))
     assert len(wav) == 4 * SR + 3 * int(0.25 * SR)
+    assert engine.marked == [len(wav)]   # the join gets one mark of its own (see test_watermark.py)
 
 
 def test_preview_of_one_sentence_has_no_pause(env):
@@ -183,6 +189,7 @@ def test_preview_of_one_sentence_has_no_pause(env):
     drain()
     assert [c["text"] for c in engine.synth_calls] == ["ನಮಸ್ಕಾರ ರೀ ಎಲ್ಲಾರೂ"]
     assert client.get(f"/api/voices/{vid}").json()["previews"][0]["seconds"] == 1.0
+    assert engine.marked == []   # one take already carries its mark
 
 
 def test_training_needs_recordings_then_previews_use_the_adapter(env):

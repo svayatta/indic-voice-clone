@@ -150,6 +150,10 @@ class Studio:
             wav, _ = self.engine.synthesize(sentence, d / "reference.wav", v["ref_text"], lora, p["seed"], p.get("params"))
             parts += [gap, wav]
         wav = np.concatenate(parts[1:])
+        if len(parts) > 2:
+            # The pauses carry no mark, and the detector scores the marked share of the file.
+            # A join of short takes can thus fall below the threshold. One mark on the join prevents this.
+            wav = self.engine.watermark(wav)
         (d / "previews").mkdir(exist_ok=True)
         write_wav(d / "previews" / f"{pid}.wav", wav, TTS_SR)
         self._set_preview(vid, pid, status="done", seconds=round(len(wav) / TTS_SR, 1), gen_time=round(time.time() - t0, 1))

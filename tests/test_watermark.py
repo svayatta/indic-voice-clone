@@ -88,27 +88,40 @@ def test_every_generated_take_is_marked(wm, monkeypatch):
     assert wm.detect(wav, SR).ours
 
 
-@pytest.mark.parametrize("sentence_sec", [3.0, 0.5])
-def test_studio_preview_of_several_sentences_is_marked(wm, tmp_path, sentence_sec):
-    """The file the user plays is the join of the takes with unmarked pauses
-    between them. The detector reports the share of the file that is marked,
-    so the join must stay ours, also for very short sentences."""
+@pytest.mark.parametrize("n, sentence_sec", [(4, 3.0), (6, 0.5), (10, 0.5), (8, 0.3)])
+def test_studio_preview_of_several_sentences_is_marked(wm, tmp_path, n, sentence_sec):
+    """The file the user plays is the join of the takes with pauses between
+    them. The detector reports the share of the file that is marked. With
+    only the marks of the takes, ten 0.5 s sentences score below the
+    threshold, so the studio marks the join. The join must stay ours and
+    the two marks together must stay quiet."""
     import soundfile as sf
 
-    from voiceclone.studio.jobs import Studio
+    from voiceclone.studio.jobs import SENTENCE_GAP_SEC, Studio
+
+    takes = [voice_like(sentence_sec, seed=i) for i in range(n)]
 
     class Engine:
+        def __init__(self):
+            self.todo = list(takes)
+
         def synthesize(self, text, ref_wav, ref_text, lora=None, seed=0, params=None):
-            return wm.embed(voice_like(sentence_sec, seed=len(text)), SR), 0   # as Synthesizer.generate returns it
+            return wm.embed(self.todo.pop(0), SR), 0   # as Synthesizer.generate returns it
+
+        def watermark(self, wav):
+            return wm.embed(wav, SR)                   # as studio.engine.Engine.watermark does
 
     studio = Studio(tmp_path, Engine(), start=False)
     vid = studio.store.create("v", "kn")["id"]
     studio.store.update(vid, lambda v: v.update(status="ready", ref_text="x"))
-    pid = studio.preview(vid, "ಒಂದು. ಎರಡು? ಮೂರು! ನಾಲ್ಕು।")[0]["id"]
+    pid = studio.preview(vid, " ".join(f"ವಾಕ್ಯ {i}." for i in range(n)))[0]["id"]
     while not studio.q.empty():
         fn, *args = studio.q.get()
         fn(*args)
-    wav, sr = sf.read(studio.store.dir(vid) / "previews" / f"{pid}.wav", dtype="float32")
-    assert len(wav) > 4 * sentence_sec * SR   # four takes and the pauses
+    wav, sr = sf.read(studio.store.dir(vid) / "previews" / f"{pid}.wav", dtype="float32")   # the 16-bit file
     d = wm.detect(wav, sr)
     assert d.ours, d
+    gap = np.zeros(int(SENTENCE_GAP_SEC * SR), np.float32)
+    clean = np.concatenate([x for t in takes for x in (gap, t)][1:])
+    assert len(wav) == len(clean)
+    assert 10 * np.log10((clean ** 2).sum() / ((wav - clean) ** 2).sum()) > 20
