@@ -532,8 +532,10 @@ Each item plays a real recording of the speaker, then one take, and the
 listener rates the take 1 to 5 on voice, accent, naturalness and pacing, with
 an optional note on what sounds wrong. Takes from both runs are mixed in random
 order. Some items are hidden anchors: a real recording rated against another.
-They show what "sounds like the speaker" scores when it is the speaker, and a
-listener who rates those below 4 on voice is left out. The listener downloads
+They show what "sounds like the speaker" scores when it is the speaker. A
+listener counts only after rating every anchor, averaging 4 or more on voice.
+The interval resamples whole listeners, so one person's many sentences count
+as one voter. The listener downloads
 a file, which includes their notes, or copies an answer code, which holds the
 ratings only. `compare --key outputs/bench/rate.key.json --answers ...` takes
 either and reports each run's mean rating, the anchors' mean and B - A per

@@ -61,8 +61,9 @@ Audio is never contributed or licensed: see [NOTICE](NOTICE) and rule 5.
    the `accent` label. The gate then builds a rating page (`listen-page --rate`)
    for main against the pull request, and the owner shares it privately with
    native speakers of the dialect. The `listening-test` check passes once at
-   least three of them, each rating the speaker's own voice at 4 or more in the
-   hidden anchors, rate the pull request's accent better with 95% confidence.
+   least three of them, each rating every hidden anchor (the speaker's own
+   voice) at 4 or more on average, rate the pull request's accent better with
+   95% confidence, resampling listeners rather than sentences.
    `voiceclone closeness` helps you find what to change (it shows which of
    pitch, rhythm, timbre or energy is off), but it is not evidence of a better
    accent either.
