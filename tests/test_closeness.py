@@ -12,16 +12,18 @@ import pytest
 
 from voiceclone.audio import ASR_SR, write_wav
 from voiceclone.benchmark import LeakError
+from voiceclone.cli import main
 from voiceclone.closeness import band, check_leak, closeness, identity_metric, long_form_pairs, write_report
 
 SR = ASR_SR
 
 
-def speech(seed=0, f0=120.0, words=6, tempo=1.0):
+def speech(seed=0, f0=120.0, words=6, tempo=1.0, formants=1.0):
     """Speech-like test signal: words of 2-4 voiced syllables with a moving
     pitch and changing formants (vowels), separated by pauses. The same seed
-    gives the same words and timing, so `f0` changes only the pitch and
-    `tempo` only the pace (durations are divided by it)."""
+    gives the same words and timing, so `f0` changes only the pitch, `tempo`
+    only the pace (durations are divided by it) and `formants` only the
+    vocal tract (every formant frequency is multiplied by it)."""
     rng = np.random.default_rng(seed)
     vowels = [(700, 1200), (300, 2300), (500, 900), (400, 2000)]
     out = [np.zeros(int(0.3 * SR))]
@@ -34,7 +36,7 @@ def speech(seed=0, f0=120.0, words=6, tempo=1.0):
             f = f0 * (1 - 0.15 * w / words) * (1 + 0.08 * np.sin(np.pi * t / t[-1]) + rng.uniform(-0.05, 0.05))
             ph = phase + 2 * np.pi * np.cumsum(f) / SR
             phase = ph[-1]
-            f1, f2 = vowels[rng.integers(len(vowels))]
+            f1, f2 = (formants * x for x in vowels[rng.integers(len(vowels))])
             y = np.zeros(n)
             for k in range(1, 30):
                 fk = k * f.mean()
@@ -67,13 +69,22 @@ def test_a_recording_is_close_to_itself_on_every_dimension(original):
     assert m["value"] == pytest.approx(0, abs=1e-6)
 
 
-def test_a_higher_voice_fails_pitch_but_keeps_its_rhythm(original):
-    clone = speech(0, f0=120.0 * 2 ** (4 / 12))   # same words and timing, 4 semitones higher
+def test_a_higher_voice_fails_pitch_and_nothing_else(original):
+    clone = speech(0, f0=120.0 * 2 ** (4 / 12))   # same words, timing and vocal tract, 4 semitones higher
     rep = closeness([(clone, original)], same_words=True)
     pitch = rep["dimensions"]["pitch"]["metrics"]
     assert pitch["pitch_median_st"]["value"] == pytest.approx(4, abs=0.6)   # it measures the shift itself
-    assert rep["dimensions"]["pitch"]["band"] == "far"
-    assert rep["dimensions"]["rhythm"]["band"] == "close"
+    assert bands(rep) == {"identity": None, "timbre": None, "pitch": "far", "rhythm": "close", "energy": "close"}
+    # harmonics 4 semitones apart sample the same vocal tract at other frequencies; scored anyway, the
+    # pitch change read as a timbre distance of about 20 dB ("far"), sending the next experiment after
+    # the voice instead of the pitch. Timbre is left out, and the report says why.
+    assert any("timbre" in s and "pitch" in s for s in rep["skipped"])
+
+
+def test_another_vocal_tract_fails_timbre_and_nothing_else(original):
+    clone = speech(0, formants=1.3)   # same words, timing and pitch, formants 30% higher
+    rep = closeness([(clone, original)], same_words=True)
+    assert bands(rep) == {"identity": None, "timbre": "far", "pitch": "close", "rhythm": "close", "energy": "close"}
 
 
 def test_slower_speech_fails_rhythm_but_keeps_its_pitch(original):
@@ -81,8 +92,7 @@ def test_slower_speech_fails_rhythm_but_keeps_its_pitch(original):
     rep = closeness([(clone, original)], same_words=True)
     rhythm = rep["dimensions"]["rhythm"]["metrics"]
     assert rhythm["speech_duration_ratio"]["value"] == pytest.approx(1 / 0.65, rel=0.1)
-    assert rep["dimensions"]["rhythm"]["band"] == "far"
-    assert rep["dimensions"]["pitch"]["band"] == "close"
+    assert bands(rep) == {"identity": None, "timbre": "close", "pitch": "close", "rhythm": "far", "energy": "close"}
 
 
 def test_alignment_metrics_are_not_computed_for_different_words(original):
@@ -90,11 +100,51 @@ def test_alignment_metrics_are_not_computed_for_different_words(original):
     # sentences, not the voice, so those metrics must be absent, not guessed
     other = speech(seed=7)
     rep = closeness([(other, original)], same_words=False)
-    assert rep["dimensions"]["timbre"]["band"] is None
     assert rep["dimensions"]["pitch"]["metrics"]["pitch_contour_corr"]["value"] is None
-    assert rep["dimensions"]["rhythm"]["metrics"]["speech_duration_ratio"]["value"] is None
-    # the same speaker's pitch level and range are still comparable
-    assert rep["dimensions"]["pitch"]["band"] == "close"
+    # pause share depends on the sentence, so different words leave rhythm unscored, not red
+    assert rep["dimensions"]["rhythm"]["metrics"]["pause_fraction_diff"]["value"] is None
+    # the same speaker's pitch level, range and loudness spread are still comparable
+    assert bands(rep) == {"identity": None, "timbre": None, "pitch": "close", "rhythm": None, "energy": "close"}
+
+
+def test_a_monotone_clone_is_far_on_pitch_range(original):
+    # a range of 0.0 is the worst range there is, not a missing one
+    from voiceclone.closeness import unaligned_metrics
+
+    flat = {"pitch_median": 10.0, "pitch_range": 0.0, "pause_fraction": 0.2, "dynamic_range": 10.0}
+    m = unaligned_metrics(flat, {**flat, "pitch_range": 4.0}, same_words=True)
+    assert m["pitch_range_ratio"] == 0.0 and band("pitch_range_ratio", m["pitch_range_ratio"]) == "far"
+
+
+def test_a_quiet_chunk_is_measured_with_its_own_speech_mask(original):
+    # one speech mask over loud and quiet chunks glued together counts the quiet
+    # chunk as silence, so its 4-semitone error would vanish from the pitch level
+    quiet_orig = 0.003 * original / np.abs(original).max()
+    quiet_clone = 0.003 * speech(0, f0=120.0 * 2 ** (4 / 12))
+    rep = closeness([(original, original), (quiet_clone, quiet_orig)], same_words=True)
+    level = rep["dimensions"]["pitch"]["metrics"]["pitch_median_st"]["value"]
+    assert level == pytest.approx(2, abs=0.5)   # half the speaking time is 4 semitones off
+    assert [c["pair"] for c in rep["contours"]] == [0, 1]   # the figure shows every pair
+
+
+def test_pairs_count_by_speaking_time_not_by_number(original):
+    # a one-second chunk must not move the result as much as a long one
+    short = original[: int(1.4 * SR)]
+    rep = closeness([(original, original), (speech(0, formants=1.3)[: len(short)], short)], same_words=True)
+    t = rep["dimensions"]["timbre"]["metrics"]["timbre_distance_db"]["value"]
+    far = closeness([(speech(0, formants=1.3)[: len(short)], short)], same_words=True)
+    assert 0 < t < 0.5 * far["dimensions"]["timbre"]["metrics"]["timbre_distance_db"]["value"]
+
+
+def test_his_own_spread_counts_as_close():
+    # two recordings of him 2 semitones apart: a clone inside that spread is as
+    # close as he is to himself, not "noticeably different"
+    assert band("pitch_median_st", 1.8) == "noticeably different"
+    assert band("pitch_median_st", 1.8, baseline=2.0) == "close"
+    assert band("pitch_median_st", 2.5, baseline=2.0) == "noticeably different"
+    assert band("pitch_range_ratio", 0.7, baseline=1 / 1.5) == "close"
+    # a tight baseline never makes the cutoffs stricter than the defaults
+    assert band("pitch_median_st", 0.9, baseline=0.1) == "close"
 
 
 def test_identity_is_judged_against_the_speakers_own_similarity():
@@ -117,10 +167,31 @@ def test_identity_uses_the_encoder_and_the_baseline(original):
             v = np.array([np.cos(f0 / 100), np.sin(f0 / 100)])
             return v / np.linalg.norm(v)
 
-    rep = closeness([(speech(3), original)], same_words=False, encoder=Encoder(), baseline=speech(5))
-    ident = rep["dimensions"]["identity"]
-    assert ident["band"] == "close"
-    assert ident["metrics"]["identity"]["baseline"] == pytest.approx(1, abs=0.01)
+    rep = closeness([(speech(3), original)], same_words=False, encoder=Encoder(), baseline=speech(5, f0=150))
+    ident = rep["dimensions"]["identity"]["metrics"]
+    # the ratio is shown against his own 1.0, and the raw cosines on their own row, never mixed in one cell
+    assert ident["identity"]["baseline"] == 1.0
+    base_cos = ident["identity_cosine"]["baseline"]
+    assert 0.5 <= base_cos < 0.98
+    assert ident["identity"]["value"] == pytest.approx(ident["identity_cosine"]["value"] / base_cos)
+
+
+def test_a_baseline_that_is_the_same_take_or_another_speaker_is_refused(original):
+    # the same take (cosine ~1) makes every clone look poor; a cosine of 0.2 makes a
+    # mediocre clone look as close as recordings get. Either way the band would lie.
+    baseline = speech(5)
+
+    class Encoder:   # the baseline embeds as `vec`; clone and original as (1, 0)
+        def __init__(self, vec):
+            self.vec = vec
+
+        def embed(self, y):
+            return self.vec if y is baseline else np.array([1.0, 0.0])
+
+    with pytest.raises(ValueError, match="same take"):
+        closeness([(original, original)], False, encoder=Encoder(np.array([1.0, 0.0])), baseline=baseline)
+    with pytest.raises(ValueError, match="another speaker"):
+        closeness([(original, original)], False, encoder=Encoder(np.array([0.2, np.sqrt(0.96)])), baseline=baseline)
 
 
 def clips(path, files):
@@ -143,6 +214,30 @@ def test_a_clone_of_a_recording_it_trained_on_is_refused(tmp_path):
     assert check_leak(["K06"], adapter, allow=True) == {"checked": True, "leaked": ["K06"], "allowed": True}
     assert check_leak(["K20"], adapter) == {"checked": True, "leaked": [], "allowed": False}
     assert check_leak(["K06"], None) == {"checked": False, "leaked": [], "allowed": False}
+    # unknown training data: refused, or with --allow-leak reported as unchecked (as `benchmark` does)
+    with pytest.raises(LeakError):
+        check_leak(["K06"], tmp_path)
+    assert check_leak(["K06"], tmp_path, allow=True)["checked"] is False
+
+
+def test_the_leak_check_cannot_be_dodged_by_the_file_name(tmp_path):
+    # long-form writes original.wav; its stem names no recording, so a check
+    # against it would always pass. The CLI must ask which recording it is.
+    adapter = lora(tmp_path / "lora", clips(tmp_path / "c", ["K06_0001.wav"]))
+    wav = tmp_path / "original.wav"
+    write_wav(wav, speech(0)[:SR], SR)
+    with pytest.raises(SystemExit, match="original-source"):
+        main(["closeness", "--clone", str(wav), "--original", str(wav), "--lora", str(adapter), "--no-identity",
+              "--out", str(tmp_path / "o")])
+    # a file name in --original-source is read the way benchmark reads clip names
+    with pytest.raises(SystemExit, match="K06"):
+        main(["closeness", "--clone", str(wav), "--original", str(wav), "--lora", str(adapter), "--no-identity",
+              "--original-source", "K06.wav", "--out", str(tmp_path / "o")])
+
+
+def test_long_form_cannot_be_mixed_with_a_single_pair(tmp_path):
+    with pytest.raises(SystemExit, match="one mode"):
+        main(["closeness", "--long-form", str(tmp_path), "--clone", "a.wav", "--out", str(tmp_path / "o")])
 
 
 def test_long_form_folder_pairs_each_clone_chunk_with_the_original_words(tmp_path, original):

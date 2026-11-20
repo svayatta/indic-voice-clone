@@ -534,15 +534,18 @@ voiceclone closeness --long-form outputs/long --baseline data/K14.wav --out outp
 voiceclone closeness --clone take.wav --original K06.wav --baseline K14.wav --out outputs/closeness
 ```
 
-`--baseline` is a second real recording of him: every number is then shown
-next to what his own recordings reach, and identity is judged as a fraction
-of it, because on tape even two recordings of him disagree. Timbre, the two
-contours and pace need the same words, so they are not measured for
-different texts. Pass `--lora` to refuse an original the adapter trained on
-(`--original-source` names it for a long-form folder). It writes
-`closeness.html` (audio, table and pitch contours) and `closeness.json`. The
-timbre thresholds are provisional, and timbre distance also rises with a
-pitch difference, so read it next to the pitch row.
+`--baseline` is a second real recording of him (not the same take). Every
+number is then shown next to what his own recordings reach, and a difference
+no larger than theirs counts as close, because on tape even two recordings of
+him disagree. Identity becomes a fraction of his own similarity, with the raw
+voiceprint cosines on a row of their own. Timbre, the two contours, pace and
+pauses need the same words, so they are not measured for different texts.
+Timbre is compared only where the clone's pitch is within a semitone of his;
+when the pitch is off everywhere it is not measured, so fix pitch first.
+Pass `--lora` to refuse an original the adapter trained on; `--original-source`
+names its recording tag (such as K06) when the file name doesn't, as for a
+long-form folder. It writes `closeness.html` (audio, table and a pitch
+contour per pair) and `closeness.json`. The timbre thresholds are provisional.
 
 ## Command reference
 

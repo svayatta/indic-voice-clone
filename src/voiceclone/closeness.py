@@ -6,7 +6,9 @@ one dimension at a time, so the next change can target it:
 
   identity  ECAPA voiceprint cosine, as a fraction of what two real
             recordings of him reach (or absolute, without a second recording)
-  timbre    spectral-envelope distance on the same words (MCD-style)
+  timbre    spectral-envelope distance on the same words (MCD-style), only
+            where the two pitches match: harmonics sample the envelope, so a
+            pitch change alone would otherwise read as a different timbre
   pitch     median level and range (any words); intonation contour (same words)
   rhythm    speaking time for the same words; share of time spent in pauses
   energy    loud-to-quiet spread (any words); stress contour (same words)
@@ -38,12 +40,19 @@ SPEECH_BELOW_PEAK_DB = 30.0     # and within this of loud speech (95th percentil
                                 # reverb or processing artefacts, which would otherwise count on clean recordings
 MAX_DTW_CELLS = 25_000_000      # frames(clone) x frames(original); about 50 s x 50 s. Longer pairs are skipped
 MIN_FRAMES_FOR_CORR = 20        # fewer aligned frames than this give no contour correlation
+TIMBRE_PITCH_MATCH_ST = 1.0     # timbre compares only frames whose pitches are this close (or both unvoiced)
+MIN_TIMBRE_FRAMES = 20          # fewer such frames than this: timbre is not measured
+BASELINE_SAME_TAKE = 0.98       # a baseline this similar to the original is the same take, not another recording
+BASELINE_TOO_LOW = 0.50         # below this the baseline is likely another speaker or unusable audio
 
 # librosa's MFCCs are a DCT of 10*log10(mel power), i.e. of 20/ln(10) * ln|X|.
 # Classic MCD is 10/ln(10) * sqrt(2 * sum(dc^2)) over natural-log cepstra, which
 # for these coefficients is |dc| / sqrt(2). The DCT normalisation still differs
 # from SPTK mel-cepstra, so the numbers are MCD-like, not comparable with papers.
 TIMBRE_SCALE = 1 / np.sqrt(2)
+
+# file stems that `long-form` and `benchmark` write: they name an output, not the recording it came from
+GENERATED_NAMES = ("original", "cloned", "clone", "ab")
 
 CLOSE, DIFFERENT, FAR = "close", "noticeably different", "far"
 _ORDER = {CLOSE: 0, DIFFERENT: 1, FAR: 2}
@@ -72,6 +81,9 @@ THRESHOLDS = {
         "low", 6.0, 9.0, "timbre distance (MCD-like)", "dB",
         "Spectral-envelope distance on the same words after time alignment. Provisional thresholds: typical "
         "TTS systems report 4-8 dB MCD; to be calibrated on real clone/original pairs."),
+    "identity_cosine": Threshold(
+        "info", 0.0, 0.0, "voiceprint cosine to the original", "",
+        "Raw ECAPA cosines, shown for reference; the band comes from the ratio above."),
     "pitch_median_st": Threshold(
         "low", 1.0, 3.0, "pitch level difference", "semitones",
         "Listeners start to hear a different pitch level at about 1 semitone; 3 semitones is another register."),
@@ -99,7 +111,7 @@ THRESHOLDS = {
 }
 
 DIMENSIONS = {
-    "identity": ("Identity", ["identity"]),
+    "identity": ("Identity", ["identity", "identity_cosine"]),
     "timbre": ("Timbre", ["timbre_distance_db"]),
     "pitch": ("Pitch", ["pitch_median_st", "pitch_range_ratio", "pitch_contour_corr"]),
     "rhythm": ("Rhythm", ["speech_duration_ratio", "pause_fraction_diff"]),
@@ -107,15 +119,32 @@ DIMENSIONS = {
 }
 
 
-def band(key: str, value) -> str | None:
-    """Band of a metric value under THRESHOLDS[key]; None when not measured."""
-    if value is None or not np.isfinite(value):
-        return None
+def _distance(kind, value):
+    """Value on the threshold's scale: ratios fold onto >= 1 (half and double are equally far)."""
+    return (max(value, 1 / value) if value > 0 else np.inf) if kind == "ratio" else value
+
+
+def cutoffs(key: str, baseline=None) -> tuple[float, float]:
+    """(close, different) for a metric. With a baseline (the same metric for another real
+    recording of him), what his own recordings already differ by counts as close: the
+    cutoffs move out to it, keeping the width of the noticeably-different band."""
     t = THRESHOLDS[key]
+    if baseline is None or not np.isfinite(baseline) or t.kind in ("high", "info"):
+        return t.close, t.different
+    b = _distance(t.kind, baseline)
+    return max(t.close, b), max(t.different, b + t.different - t.close)
+
+
+def band(key: str, value, baseline=None) -> str | None:
+    """Band of a metric value under THRESHOLDS[key]; None when not measured or not banded."""
+    t = THRESHOLDS[key]
+    if value is None or not np.isfinite(value) or t.kind == "info":
+        return None
+    close, different = cutoffs(key, baseline)
     if t.kind == "high":
-        return CLOSE if value >= t.close else DIFFERENT if value >= t.different else FAR
-    x = (max(value, 1 / value) if value > 0 else np.inf) if t.kind == "ratio" else value
-    return CLOSE if x <= t.close else DIFFERENT if x <= t.different else FAR
+        return CLOSE if value >= close else DIFFERENT if value >= different else FAR
+    x = _distance(t.kind, value)
+    return CLOSE if x <= close else DIFFERENT if x <= different else FAR
 
 
 def identity_metric(sim: float, baseline: float | None) -> tuple[float, str]:
@@ -163,12 +192,14 @@ def _absdiff(a, b):
     return None if a is None or b is None else abs(a - b)
 
 
-def unaligned_metrics(sc: dict, so: dict) -> dict:
+def unaligned_metrics(sc: dict, so: dict, same_words: bool) -> dict:
+    """Pause share depends on the sentence as much as on the speaker, so it is
+    compared only for the same words."""
     return {
         "pitch_median_st": _absdiff(sc["pitch_median"], so["pitch_median"]),
         "pitch_range_ratio": (sc["pitch_range"] / so["pitch_range"]
-                              if sc["pitch_range"] and so["pitch_range"] else None),
-        "pause_fraction_diff": _absdiff(sc["pause_fraction"], so["pause_fraction"]),
+                              if sc["pitch_range"] is not None and so["pitch_range"] else None),
+        "pause_fraction_diff": _absdiff(sc["pause_fraction"], so["pause_fraction"]) if same_words else None,
         "dynamic_range_diff_db": _absdiff(sc["dynamic_range"], so["dynamic_range"]),
     }
 
@@ -199,10 +230,14 @@ def aligned_metrics(fc: dict, fo: dict) -> dict:
     _, wp = librosa.sequence.dtw(X=X, Y=Y, metric="euclidean")
     i, j = wp[::-1, 0], wp[::-1, 1]
     both = fc["speech"][i] & fo["speech"][j]
-    voiced = np.isfinite(fc["st"][i]) & np.isfinite(fo["st"][j])
-    dist = np.linalg.norm(X[:, i[both]] - Y[:, j[both]], axis=0)
+    sc, so = fc["st"][i], fo["st"][j]
+    voiced = np.isfinite(sc) & np.isfinite(so)
+    unvoiced = ~np.isfinite(sc) & ~np.isfinite(so)
+    matched = both & (unvoiced | (voiced & (np.abs(np.where(voiced, sc - so, 0)) <= TIMBRE_PITCH_MATCH_ST)))
+    dist = np.linalg.norm(X[:, i[matched]] - Y[:, j[matched]], axis=0)
     return {
-        "timbre_distance_db": float(dist.mean() * TIMBRE_SCALE) if len(dist) else None,
+        "timbre_distance_db": float(dist.mean() * TIMBRE_SCALE) if len(dist) >= MIN_TIMBRE_FRAMES else None,
+        "timbre_frames": int(len(dist)),
         "pitch_contour_corr": _corr(fc["st"][i][voiced], fo["st"][j][voiced]),
         "energy_contour_corr": _corr(fc["db"][i][both], fo["db"][j][both]),
         "speech_s_clone": float(fc["speech"].sum() * HOP / SR),
@@ -211,9 +246,18 @@ def aligned_metrics(fc: dict, fo: dict) -> dict:
     }
 
 
-def _mean(rows, k):
-    v = [r[k] for r in rows if r.get(k) is not None]
-    return float(np.mean(v)) if v else None
+def _weighted(rows, k, w="speech_s_original", log=False):
+    """Mean of rows[k] weighted by each pair's speaking time, so a one-second chunk
+    counts a tenth as much as a ten-second one. log: geometric mean (for ratios)."""
+    v = [(r[k], r[w]) for r in rows if r.get(k) is not None and r.get(w)]
+    if not v:
+        return None
+    x, wt = np.array(v, dtype=float).T
+    if log:
+        if (x <= 0).any():
+            return float(x[x <= 0][0])
+        return float(np.exp(np.average(np.log(x), weights=wt)))
+    return float(np.average(x, weights=wt))
 
 
 def _downsample(xs, n=400):
@@ -228,54 +272,77 @@ def closeness(pairs, same_words: bool, encoder=None, baseline: np.ndarray | None
 
     same_words: each pair says the same words (enables the aligned metrics).
     encoder: anything with .embed(y16) -> unit vector (SpeakerEncoder); None skips identity.
-    baseline: another real recording of the speaker (different words), so each
-    unaligned metric and identity can be shown next to what his own recordings reach."""
-    clone = np.concatenate([np.asarray(c, np.float32) for c, _ in pairs])
-    orig = np.concatenate([np.asarray(o, np.float32) for _, o in pairs])
-    fo = features(orig)
-    values = unaligned_metrics(stats(features(clone)), stats(fo))
-    base_values = unaligned_metrics(stats(features(baseline)), stats(fo)) if baseline is not None else {}
+    baseline: another real recording of the speaker (different words). What his own
+    recordings already differ by then counts as close (see `cutoffs`).
 
-    per_pair, skipped = [], []
+    Each pair is measured with its own speech mask (a quiet chunk next to a loud
+    one stays speech), and pairs are combined weighted by the original's speaking time."""
+    fb = features(baseline) if baseline is not None else None
+    per_pair, skipped, contours = [], [], []
+    for n, (c, o) in enumerate(pairs):
+        fc, fo = features(c), features(o)
+        so = stats(fo)
+        m = {"speech_s_original": float(fo["speech"].sum() * HOP / SR), **unaligned_metrics(stats(fc), so, same_words)}
+        if fb is not None:
+            m["baseline"] = unaligned_metrics(stats(fb), so, same_words)
+        if same_words:
+            a = aligned_metrics(fc, fo)
+            if "skipped" in a:
+                skipped.append(f"pair {n}: {a['skipped']}")
+            m.update(a)
+        aligned = "contour" in m
+        cc, co = m.pop("contour") if aligned else (fc["st"], fo["st"])
+        contours.append({"pair": n, "seconds": round(len(o) / SR, 1), "aligned": aligned,
+                         "clone": _downsample(cc), "original": _downsample(co)})
+        per_pair.append(m)
+
+    values, base_values = {}, {}
+    for k in ("pitch_median_st", "pitch_range_ratio", "pause_fraction_diff", "dynamic_range_diff_db"):
+        log = THRESHOLDS[k].kind == "ratio"
+        values[k] = _weighted(per_pair, k, log=log)
+        if fb is not None:
+            base_values[k] = _weighted([{**m["baseline"], "speech_s_original": m["speech_s_original"]}
+                                        for m in per_pair], k, log=log)
     if same_words:
-        for n, (c, o) in enumerate(pairs):
-            m = aligned_metrics(features(c), features(o))
-            if "skipped" in m:
-                skipped.append(f"pair {n}: {m['skipped']}")
-            per_pair.append(m)
         done = [m for m in per_pair if "skipped" not in m]
         for k in ("timbre_distance_db", "pitch_contour_corr", "energy_contour_corr"):
-            values[k] = _mean(done, k)
+            values[k] = _weighted(done, k)
         so = sum(m["speech_s_original"] for m in done)
         values["speech_duration_ratio"] = sum(m["speech_s_clone"] for m in done) / so if so else None
-    first = next((m for m in per_pair if "contour" in m), None)
-    contour = ({"aligned": True, "clone": _downsample(first["contour"][0]), "original": _downsample(first["contour"][1])}
-               if first else {"aligned": False, "clone": _downsample(features(pairs[0][0])["st"]),
-                              "original": _downsample(features(pairs[0][1])["st"])})
+        if values["timbre_distance_db"] is None and done:
+            skipped.append("timbre: too few frames where the clone's pitch is within "
+                           f"{TIMBRE_PITCH_MATCH_ST:g} semitone of his; fix the pitch level first")
 
     keys = {k: k for k in THRESHOLDS}
-    ident_base = None
     if encoder is not None:
+        clone = np.concatenate([np.asarray(c, np.float32) for c, _ in pairs])
+        orig = np.concatenate([np.asarray(o, np.float32) for _, o in pairs])
         eo = encoder.embed(orig)
         sim = float(np.dot(encoder.embed(clone), eo))
         ident_base = float(np.dot(encoder.embed(np.asarray(baseline, np.float32)), eo)) if baseline is not None else None
+        if ident_base is not None and not BASELINE_TOO_LOW <= ident_base < BASELINE_SAME_TAKE:
+            raise ValueError(
+                f"the baseline's voiceprint cosine to the original is {ident_base:.2f}: "
+                + ("it is the same take, not another recording of him" if ident_base >= BASELINE_SAME_TAKE else
+                   f"below {BASELINE_TOO_LOW}, so it is likely another speaker or unusable audio")
+                + "; pass a different --baseline")
         values["identity"], keys["identity"] = identity_metric(sim, ident_base)
-        values["identity_cosine"] = sim
-    base_values["identity"] = ident_base
+        base_values["identity"] = 1.0 if ident_base is not None else None
+        values["identity_cosine"], base_values["identity_cosine"] = sim, ident_base
 
     dims = {}
     for d, (label, metrics) in DIMENSIONS.items():
         rows = {}
         for m in metrics:
             t = THRESHOLDS[keys[m]]
-            v = values.get(m)
-            rows[m] = {"value": v, "baseline": base_values.get(m), "band": band(keys[m], v), "label": t.label,
-                       "unit": t.unit, "why": t.why,
-                       "threshold": {"kind": t.kind, "close": t.close, "different": t.different}}
+            v, b = values.get(m), base_values.get(m)
+            close, different = cutoffs(keys[m], b if m != "identity" else None)
+            rows[m] = {"value": v, "baseline": b, "band": band(keys[m], v, b if m != "identity" else None),
+                       "label": t.label, "unit": t.unit, "why": t.why,
+                       "threshold": {"kind": t.kind, "close": close, "different": different}}
         dims[d] = {"label": label, "band": _worst(r["band"] for r in rows.values()), "metrics": rows}
     return {"same_words": same_words, "pairs": len(pairs), "identity_cosine": values.get("identity_cosine"),
-            "dimensions": dims, "skipped": skipped, "contour": contour, "leak": None,
-            "per_pair": [{k: v for k, v in m.items() if k != "contour"} for m in per_pair]}
+            "dimensions": dims, "skipped": skipped, "contours": contours, "leak": None, "per_pair": per_pair}
 
 
 def check_leak(sources, lora, train_clips=None, allow: bool = False) -> dict:
@@ -284,7 +351,13 @@ def check_leak(sources, lora, train_clips=None, allow: bool = False) -> dict:
 
     if lora is None and not train_clips:
         return {"checked": False, "leaked": [], "allowed": False}
-    leaked = sorted(set(sources) & set(training_sources(lora, train_clips)))
+    try:
+        trained = training_sources(lora, train_clips)
+    except LeakError as e:   # as benchmark.leak_guard: --allow-leak reports an unknown training set
+        if not allow:
+            raise
+        return {"checked": False, "leaked": [], "allowed": True, "reason": str(e)}
+    leaked = sorted(set(sources) & set(trained))
     if leaked and not allow:
         raise LeakError(f"the adapter trained on {', '.join(leaked)}, so the clone would look closer than it is; "
                         "compare against a held-out recording, or pass --allow-leak to report it anyway")
@@ -321,12 +394,17 @@ def format_report(rep: dict) -> str:
     for d in rep["dimensions"].values():
         lines.append(f"{d['label']}: {d['band'] or 'not measured'}")
         for m in d["metrics"].values():
+            if m["value"] is None and m["threshold"]["kind"] == "info":
+                continue
             base = f" (his own recordings: {_fmt(m['baseline'], m['unit'])})" if m["baseline"] is not None else ""
             lines.append(f"  {m['label']}: {_fmt(m['value'], m['unit'])}{base}"
                          + (f" -> {m['band']}" if m["band"] else ""))
     lines += [f"skipped {s}" for s in rep["skipped"]]
-    if rep.get("leak") and rep["leak"].get("allowed"):
-        lines.append(f"WARNING: the adapter trained on {rep['leak']['leaked']}; these scores flatter the clone")
+    leak = rep.get("leak") or {}
+    if leak.get("allowed") and leak.get("leaked"):
+        lines.append(f"WARNING: the adapter trained on {leak['leaked']}; these scores flatter the clone")
+    elif leak.get("allowed"):
+        lines.append(f"WARNING: leak check skipped: {leak.get('reason')}")
     return "\n".join(lines)
 
 
@@ -351,7 +429,7 @@ def _svg(contour) -> str:
                        for s in segs if len(s) > 1)
 
     note = "time-aligned on the same words" if contour["aligned"] else "each over its own duration"
-    return (f'<svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="pitch contours">'
+    return (f'<h3>Pair {contour["pair"]} ({contour["seconds"]:g} s of his speech)</h3><svg viewBox="0 0 {w} {h}" width="100%" role="img" aria-label="pitch contours">'
             f'{poly(contour["original"], "#1f6feb")}{poly(contour["clone"], "#d1242f")}</svg>'
             f'<p class="note">Pitch in semitones, {note}. <span style="color:#1f6feb">Original</span>, '
             f'<span style="color:#d1242f">clone</span>.</p>')
@@ -381,9 +459,11 @@ def write_report(rep: dict, out_dir, audio=(), max_embed_bytes: int = 25_000_000
                         f'<td>{e(_fmt(m["baseline"], m["unit"]) if m["baseline"] is not None else "")}</td>'
                         f'<td class="why">{e(m["why"])}</td><td>{e(m["band"] or "not measured")}</td></tr>')
     words = "same words" if rep["same_words"] else "different words, so time-aligned metrics are not measured"
-    warn = ""
-    if rep.get("leak") and rep["leak"].get("allowed"):
-        warn = f'<p class="far">The adapter trained on {e(", ".join(rep["leak"]["leaked"]))}: these scores flatter the clone.</p>'
+    warn, leak = "", rep.get("leak") or {}
+    if leak.get("allowed") and leak.get("leaked"):
+        warn = f'<p class="far">The adapter trained on {e(", ".join(leak["leaked"]))}: these scores flatter the clone.</p>'
+    elif leak.get("allowed"):
+        warn = f'<p class="far">Leak check skipped: {e(leak.get("reason") or "")}</p>'
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><title>Closeness report</title>
 <style>
@@ -393,11 +473,12 @@ tr.dim th {{ background: #f6f8fa; }} td.why {{ color: #57606a; font-size: 13px; 
 .close {{ color: #1a7f37; }} .noticeably {{ color: #9a6700; }} .far {{ color: #d1242f; }} .none {{ color: #57606a; }}
 </style></head><body>
 <h1>How close is the clone?</h1>
-<p>{rep["pairs"]} pair(s), {e(words)}. Each dimension takes the worst band of its metrics; there is no overall score.</p>
+<p>{rep["pairs"]} pair(s), {e(words)}. Each dimension takes the worst band of its metrics; there is no overall score.
+{"Where his own recordings already differ more than a cutoff, that difference counts as close." if any(m["baseline"] is not None for d in rep["dimensions"].values() for m in d["metrics"].values()) else ""}</p>
 {warn}{"".join(players)}
 <table><tr><th>Metric</th><th>Clone vs original</th><th>His own recordings</th><th>What it means</th><th>Band</th></tr>
 {"".join(rows)}</table>
-<h2>Pitch</h2>{_svg(rep["contour"])}
+<h2>Pitch</h2>{"".join(_svg(c) for c in rep["contours"])}
 {"".join(f'<p class="note">Skipped {e(s)}</p>' for s in rep["skipped"])}
 </body></html>
 """

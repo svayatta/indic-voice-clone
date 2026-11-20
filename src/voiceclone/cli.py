@@ -265,9 +265,11 @@ def cmd_listen_page(a):
 
 def cmd_closeness(a):
     from voiceclone.audio import load16
-    from voiceclone.benchmark import source_of
-    from voiceclone.closeness import check_leak, closeness, format_report, long_form_pairs, write_report
+    from voiceclone.benchmark import LeakError, source_of
+    from voiceclone.closeness import GENERATED_NAMES, check_leak, closeness, format_report, long_form_pairs, write_report
 
+    if a.long_form and (a.clone or a.original or a.same_words):
+        sys.exit("--long-form DIR replaces --clone, --original and --same-words; pass one mode")
     if a.long_form:
         pairs, same_words = long_form_pairs(a.long_form), True
         audio = [("His line, then the clone's (ab.wav)", Path(a.long_form) / "ab.wav")]
@@ -277,10 +279,16 @@ def cmd_closeness(a):
         audio = [("Clone", a.clone), ("Original", a.original)]
     else:
         sys.exit("pass --clone and --original, or --long-form DIR")
-    sources = [a.original_source] if a.original_source else [source_of(a.original)] if a.original else []
-    if (a.lora or a.train_clips) and not sources:
-        sys.exit("--long-form with --lora needs --original-source: the recording the original words come from")
-    leak = check_leak(sources, a.lora, a.train_clips, a.allow_leak)
+    # name the recording the original words come from the way `benchmark` names clips (K06_0012.wav -> K06)
+    source = source_of(a.original_source) if a.original_source else source_of(a.original) if a.original else None
+    if (a.lora or a.train_clips) and source in (None, *GENERATED_NAMES):
+        sys.exit("cannot tell which recording the original comes from"
+                 + (f" ({a.original} is a file the tools write)" if source else "")
+                 + "; pass --original-source with its recording tag (e.g. K06) so the leak check compares it")
+    try:
+        leak = check_leak([source] if source else [], a.lora, a.train_clips, a.allow_leak)
+    except LeakError as e:
+        sys.exit(str(e))
     encoder = None
     if not a.no_identity:
         try:
@@ -289,7 +297,10 @@ def cmd_closeness(a):
             encoder = SpeakerEncoder(a.ecapa_dir)
         except ImportError:
             _log("identity not measured: install the speaker extra (.[speaker]) or pass --no-identity")
-    rep = closeness(pairs, same_words, encoder=encoder, baseline=load16(a.baseline) if a.baseline else None)
+    try:
+        rep = closeness(pairs, same_words, encoder=encoder, baseline=load16(a.baseline) if a.baseline else None)
+    except ValueError as e:
+        sys.exit(str(e))
     rep["leak"] = leak
     write_report(rep, a.out, audio)
     _log(format_report(rep))
