@@ -55,7 +55,8 @@ in the same "reference-swap" prompt format the model uses at inference.
 ## Getting started
 
 Set up the repository and run the tests. This needs no GPU, no models and no
-recordings, and takes a few minutes.
+recordings, and takes a few minutes. To use the app without setting up the
+source, run a published image instead: see [Docker](#docker).
 
 You need Python 3.10 or newer (3.12 is tested), [uv](https://docs.astral.sh/uv/)
 and [ffmpeg](https://ffmpeg.org/) on your `PATH`. On a Mac:
@@ -295,10 +296,10 @@ listens on this computer only unless you pass `--host`.
 
 ## Docker
 
-Each merge to `main` publishes an image for linux/amd64 and linux/arm64 to
-`ghcr.io/svayatta/pratidhvani` (`latest`, plus a `sha-…` tag per
-commit). It contains the `voiceclone` command and every extra, and runs the
-voice studio by default.
+Each merge to `main` publishes two images to `ghcr.io/svayatta/pratidhvani`:
+`latest` (CPU, linux/amd64 and linux/arm64) and `cuda` (CUDA 12.6,
+linux/amd64), plus `sha-…` and `sha-…-cuda` tags per commit. Both contain the
+`voiceclone` command and every extra, and run the voice studio by default.
 
 ### Before you start
 
