@@ -408,6 +408,11 @@ suspect.mp3: made with pratidhvani (detector 1.00, 16/16 tag bits)
 another.wav: no watermark found (detector 0.00, 8/16 tag bits)
 ```
 
+The command exits 0 only when every file carries the pratidhvani tag, and
+exits 1 if any file has another AudioSeal mark or no mark. Pass `--json` for
+a machine-readable list with `file`, `verdict`, `probability`, `bit_errors`
+and `ours` fields.
+
 It sits about 26 dB below the voice, and genuine recordings of the speaker
 scored 0. Every build checks that it survives the ways clips get shared
 (`tests/test_watermark.py`):

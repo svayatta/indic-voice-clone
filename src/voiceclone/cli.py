@@ -152,18 +152,28 @@ def cmd_synth(a):
 
 
 def cmd_detect(a):
-    from voiceclone.audio import load16
-    from voiceclone.watermark import SR, Watermark
+    import json
 
-    wm, found = Watermark(), 0
+    from voiceclone.audio import load16
+    from voiceclone.watermark import SR, Watermark, verdict
+
+    descriptions = {"ours": "made with pratidhvani", "other": "AudioSeal watermark from another source",
+                    "none": "no watermark found"}
+    wm, results = Watermark(), []
     for f in a.files:
         d = wm.detect(load16(f), SR)
-        found += d.ours
-        verdict = ("made with pratidhvani" if d.ours else
-                   "AudioSeal watermark from another source" if d.marked else "no watermark found")
-        print(f"{f}: {verdict} (detector {d.probability:.2f}, {16 - d.bit_errors}/16 tag bits)")
-    if not found:
+        results.append({"file": str(f), "verdict": verdict(d), "probability": d.probability,
+                        "bit_errors": d.bit_errors, "ours": d.ours})
+    if a.json:
+        print(json.dumps(results, ensure_ascii=False))
+    else:
+        for result in results:
+            print(f"{result['file']}: {descriptions[result['verdict']]} (detector {result['probability']:.2f}, "
+                  f"{16 - result['bit_errors']}/16 tag bits)")
+    if not a.json and any(result["verdict"] == "none" for result in results):
         print("no watermark doesn't prove a recording is genuine: the code can be changed, and heavy noise can hide it")
+    if not all(result["ours"] for result in results):
+        raise SystemExit(1)
 
 
 def cmd_train(a):
@@ -497,6 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = add("detect", cmd_detect, "Check recordings for the watermark that every generated take carries")
     p.add_argument("files", nargs="+", help="audio files (WAV, MP3, M4A, ... anything librosa reads)")
+    p.add_argument("--json", action="store_true", help="print machine-readable detection results")
 
     p = add("synth", cmd_synth, "Speak sentences in the reference speaker's voice")
     p.add_argument("--ref", required=True, help="reference clip of the speaker (4-8 s works well)")

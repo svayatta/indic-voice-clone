@@ -40,6 +40,15 @@ class Detection:
         return self.marked and self.bit_errors <= MAX_BIT_ERRORS
 
 
+def verdict(detection: Detection) -> str:
+    """Describe whose watermark was detected, without loading AudioSeal."""
+    if detection.ours:
+        return "ours"
+    if detection.marked:
+        return "other"
+    return "none"
+
+
 class Watermark:
     """Loads the models on first use and runs them on the CPU: a few
     seconds of speech take well under a second there, and it keeps the GPU
